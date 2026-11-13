@@ -1,0 +1,20 @@
+[
+  {
+    "profile_id": "custom",
+    "profile": "Custom",
+    "tag": "Example SSH Tunnel",
+    "type": "ssh",
+    "server": "example.com",
+    "port": 22,
+    "raw": {
+      "type": "ssh",
+      "tag": "Example SSH Tunnel",
+      "server": "example.com",
+      "server_port": 22,
+      "user": "username",
+      "password": "password"
+    },
+    "link": "ssh://username:password@example.com:22#Example%20SSH%20Tunnel",
+    "ping": null
+  }
+]

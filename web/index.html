@@ -1,0 +1,4368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XHM — Modern Proxy & VPN Manager</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <script src="/qrcode.min.js"></script>
+  <style>
+    :root {
+      --bg-base: #090a10;
+      --bg-sidebar: #10121a;
+      --bg-card: #151824;
+      --bg-card-hover: #1b1f2e;
+      --bg-card-active: #0f241d;
+      --border-card: rgba(255, 255, 255, 0.07);
+      --border-active: #10b981;
+      --text-main: #f8fafc;
+      --text-muted: #8b949e;
+      --text-dim: #545d68;
+      --accent-blue: #3b82f6;
+      --accent-indigo: #6366f1;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-amber: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    button, .switch, .proto-badge, .ping-badge, .sidebar-footer, .topbar, .filter-tabs {
+      user-select: none;
+    }
+
+    .active-endpoint, .node-meta, .inspector-value, .sub-url, .status-error-banner,
+    .logs-drawer, .traffic-table, .traffic-summary-val, input, textarea, select {
+      user-select: text;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+
+    /* Layout */
+    #sidebar {
+      width: 300px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-card);
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 14px;
+      flex-shrink: 0;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+    }
+
+    #sidebar::-webkit-scrollbar { width: 5px; }
+    #sidebar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+    #sidebar::-webkit-scrollbar-track { background: transparent; }
+
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 20px 24px;
+      overflow: hidden;
+    }
+
+    /* Brand Header */
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #2563eb, #38bdf8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+    }
+    .brand-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: #ffffff;
+    }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .brand-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-top: 2px;
+    }
+
+    /* Status Card */
+    .status-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: all 0.3s ease;
+    }
+    .status-card.connected {
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, rgba(16, 185, 129, 0.03) 100%);
+      border-color: rgba(16, 185, 129, 0.4);
+      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.15);
+    }
+    .status-card.has-error {
+      background: linear-gradient(180deg, rgba(244, 63, 94, 0.12) 0%, rgba(244, 63, 94, 0.03) 100%);
+      border-color: rgba(244, 63, 94, 0.4);
+      box-shadow: 0 8px 24px rgba(244, 63, 94, 0.15);
+    }
+    .status-card.has-error .status-dot {
+      background: var(--accent-rose);
+      box-shadow: 0 0 10px var(--accent-rose);
+      animation: none;
+    }
+    .status-card.has-error .status-badge {
+      background: rgba(244, 63, 94, 0.15);
+      color: #fb7185;
+    }
+    .active-endpoint.error-text {
+      color: #fb7185;
+      font-size: 11px;
+      word-break: break-word;
+      line-height: 1.4;
+      max-height: 48px;
+      overflow-y: auto;
+    }
+
+    .status-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+    .status-card.connected .status-dot {
+      background: var(--accent-emerald);
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.15); }
+    }
+
+    .active-tag {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .active-endpoint {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* Main Big Toggle Button */
+    .btn-main-toggle {
+      width: 100%;
+      padding: 14px 20px;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      background: var(--accent-emerald);
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+    }
+    .btn-main-toggle:hover {
+      background: #059669;
+      transform: translateY(-1px);
+    }
+    .btn-main-toggle.connected {
+      background: rgba(244, 63, 94, 0.15);
+      color: var(--accent-rose);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      box-shadow: none;
+    }
+    .btn-main-toggle.connected:hover {
+      background: rgba(244, 63, 94, 0.25);
+    }
+
+    /* System Proxy Switch */
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 12px 16px;
+    }
+    .control-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    /* Traffic & Speed Live Card */
+    .traffic-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 14px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .traffic-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .speed-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .speed-item {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .speed-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .speed-val {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      color: var(--text-main);
+    }
+    .speed-down .speed-val { color: var(--accent-emerald); }
+    .speed-up .speed-val { color: #38bdf8; }
+    .usage-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .usage-total {
+      font-weight: 700;
+      color: var(--text-main);
+      font-family: ui-monospace, monospace;
+    }
+    .btn-copy-cli {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-copy-cli:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* iOS/macOS Style Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #2b3145;
+      transition: .3s;
+      border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+    input:checked + .slider { background-color: var(--accent-emerald); }
+    input:checked + .slider:before { transform: translateX(20px); }
+
+    /* Footer Info */
+    .sidebar-footer {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .footer-row {
+      display: flex;
+      justify-content: space-between;
+    }
+    .footer-row span:last-child {
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    /* Main Area Top Bar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .search-box {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-box svg {
+      position: absolute;
+      left: 14px;
+      width: 16px;
+      height: 16px;
+      fill: var(--text-muted);
+    }
+    .search-input {
+      width: 100%;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      padding: 11px 16px 11px 40px;
+      color: var(--text-main);
+      font-size: 13px;
+      outline: none;
+      transition: border 0.2s;
+    }
+    .search-input:focus {
+      border-color: var(--accent-indigo);
+    }
+
+    .btn-action {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-action:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #4f46e5, #3b82f6);
+      border: none;
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #4338ca, #2563eb);
+    }
+
+    /* Filter Tabs */
+    .filter-tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .tabs-group {
+      display: flex;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border-card);
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      background: var(--bg-card);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    .node-counter {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Server Cards Scrollable List */
+    .nodes-container {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+    }
+    .nodes-container::-webkit-scrollbar {
+      width: 6px;
+    }
+    .nodes-container::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+    }
+
+    .node-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    .node-card:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(255, 255, 255, 0.14);
+    }
+    .node-card.active {
+      background: var(--bg-card-active);
+      border-color: var(--border-active);
+      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.15);
+    }
+    .node-card.selected:not(.active) {
+      border-color: rgba(99, 102, 241, 0.6);
+      background: rgba(99, 102, 241, 0.08);
+    }
+    .btn-icon-card {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      transition: all 0.2s;
+    }
+    .btn-icon-card:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .inspector-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .inspector-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+    .inspector-val {
+      font-size: 12px;
+      color: var(--text-main);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      word-break: break-all;
+    }
+    .inspector-top-layout {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+      margin: 12px 0;
+    }
+    .inspector-qr-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      background: #ffffff;
+      border-radius: 14px;
+      width: 250px;
+      height: 250px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+      flex-shrink: 0;
+    }
+    .inspector-qr-wrap canvas,
+    .inspector-qr-wrap img {
+      width: 222px !important;
+      height: 222px !important;
+      display: block !important;
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
+    }
+    .inspector-meta-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .inspector-actions-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 2px;
+      flex-wrap: wrap;
+    }
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 11px;
+      height: 30px;
+    }
+
+    /* Inspector Recommended Apps Card */
+    .insp-apps-card {
+      margin-top: 4px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .insp-apps-header {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-blue);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .insp-platform-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .insp-platform-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      min-width: 52px;
+      text-transform: uppercase;
+    }
+    .insp-platform-apps {
+      color: var(--text-main);
+      font-size: 11px;
+    }
+
+    /* Node Card Recommended App Hint */
+    .app-hint-tag {
+      font-size: 10px;
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      padding: 1px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .node-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .proto-badge {
+      font-size: 10px;
+      font-weight: 800;
+      padding: 4px 6px;
+      min-width: 58px;
+      text-align: center;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      flex-shrink: 0;
+      background: rgba(148, 163, 184, 0.14);
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .proto-vless { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+    .proto-vmess { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+    .proto-trojan { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .proto-shadowsocks { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .proto-hysteria2 { background: rgba(217, 70, 239, 0.15); color: #e879f9; border: 1px solid rgba(217, 70, 239, 0.3); }
+    .proto-tuic { background: rgba(6, 182, 212, 0.15); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.3); }
+    .proto-wireguard { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); }
+    .proto-ssh { background: rgba(244, 63, 94, 0.15); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.3); }
+    .proto-npvt-ssh { background: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.3); }
+    .proto-socks { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+    .node-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .node-tag {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .node-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, monospace;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .node-endpoint {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .source-tag {
+      font-size: 10px;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 1px 6px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .node-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .ping-badge {
+      font-size: 11px;
+      font-weight: 600;
+      font-family: monospace;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .ping-badge:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .ping-green { color: var(--accent-emerald); background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); }
+    .ping-amber { color: var(--accent-amber); background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); }
+    .ping-red { color: var(--accent-rose); background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.25); }
+
+    .btn-connect-card {
+      background: #23283a;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-connect-card:hover {
+      background: var(--accent-emerald);
+      border-color: var(--accent-emerald);
+    }
+    .node-card.active .btn-connect-card {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: var(--accent-rose);
+      color: var(--accent-rose);
+    }
+
+    .btn-del-card {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      transition: all 0.2s;
+    }
+    .btn-del-card:hover {
+      color: var(--accent-rose);
+      background: rgba(244, 63, 94, 0.1);
+    }
+
+    .btn-edit-card {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      transition: all 0.2s;
+    }
+    .btn-edit-card:hover {
+      color: var(--accent-indigo);
+      background: rgba(99, 102, 241, 0.15);
+    }
+
+    /* Modal Overlay */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-box {
+      width: 580px;
+      background: var(--bg-sidebar);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      transform: translateY(10px);
+      transition: transform 0.2s ease;
+    }
+    .modal-overlay.open .modal-box {
+      transform: translateY(0);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .modal-close {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 20px;
+      cursor: pointer;
+    }
+
+    .modal-textarea {
+      width: 100%;
+      height: 160px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 14px;
+      color: var(--text-main);
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      resize: vertical;
+      outline: none;
+    }
+    .modal-textarea:focus {
+      border-color: var(--accent-indigo);
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    /* Toast Notifications */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    .toast {
+      background: rgba(21, 24, 36, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(12px);
+      padding: 12px 18px;
+      border-radius: 12px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      animation: toastIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: auto;
+      max-width: 380px;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(12px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .toast.success { border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+    .toast.error { border-color: rgba(244, 63, 94, 0.4); color: #fb7185; }
+    .toast.info { border-color: rgba(99, 102, 241, 0.4); color: #818cf8; }
+
+    /* Live Core Logs Drawer */
+    .logs-drawer {
+      height: 0;
+      overflow: hidden;
+      background: #0d0f17;
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      transition: height 0.25s cubic-bezier(0.16, 1, 0.3, 1), margin-top 0.25s ease;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      margin-top: 0;
+    }
+    .logs-drawer.open {
+      height: 200px;
+      margin-top: 12px;
+    }
+    .logs-header {
+      padding: 7px 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+    }
+    .btn-log-action {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-log-action:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: var(--text-main);
+    }
+    .logs-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #94a3b8;
+      user-select: text;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-line {
+      margin-bottom: 2px;
+    }
+    .log-error { color: #fb7185; }
+    .log-warn { color: #fbbf24; }
+    .log-info { color: #38bdf8; }
+    .log-success { color: #34d399; }
+
+    /* Web Speed / Connectivity Button */
+    .btn-check-web {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-main);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.2s;
+    }
+    .btn-check-web:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Subscription Item Styling */
+    .sub-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .sub-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      overflow: hidden;
+      flex: 1;
+    }
+    .sub-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .sub-url {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .sub-meta {
+      font-size: 10px;
+      color: var(--text-dim);
+      display: flex;
+      gap: 12px;
+    }
+
+    /* Traffic Analytics Button in Traffic Card */
+    .btn-traffic-link {
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      color: #60a5fa;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s;
+    }
+    .btn-traffic-link:hover {
+      background: rgba(59, 130, 246, 0.24);
+      border-color: rgba(59, 130, 246, 0.45);
+      color: #93c5fd;
+    }
+
+    /* Node Card Traffic Badge */
+    .node-traffic-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      color: #94a3b8;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .node-traffic-pill:hover {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: rgba(59, 130, 246, 0.3);
+      color: #93c5fd;
+    }
+
+    /* Traffic Analytics Modal */
+    .modal-box-traffic {
+      width: 860px;
+      max-width: 94vw;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 24px;
+      overflow: hidden;
+    }
+
+    .traffic-header-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .traffic-filter-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 10px 14px;
+      flex-wrap: wrap;
+    }
+    .traffic-filter-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .traffic-select {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      max-width: 260px;
+    }
+    .traffic-select:focus {
+      border-color: var(--accent-blue);
+    }
+    .traffic-input-date {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 11px;
+      outline: none;
+    }
+
+    /* KPI Grid */
+    .traffic-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    @media (max-width: 768px) {
+      .traffic-kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    .traffic-kpi-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      overflow: hidden;
+    }
+    .traffic-kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent-blue), transparent);
+    }
+    .traffic-kpi-card.accent-emerald::before {
+      background: linear-gradient(90deg, var(--accent-emerald), transparent);
+    }
+    .traffic-kpi-card.accent-amber::before {
+      background: linear-gradient(90deg, var(--accent-amber), transparent);
+    }
+    .traffic-kpi-card.accent-indigo::before {
+      background: linear-gradient(90deg, var(--accent-indigo), transparent);
+    }
+    .traffic-kpi-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .traffic-kpi-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+    .traffic-kpi-sub {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    /* Traffic Navigation Tabs */
+    .traffic-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 8px;
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+    .traffic-tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .traffic-tab-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .traffic-tab-btn.active {
+      color: #ffffff;
+      background: rgba(59, 130, 246, 0.2);
+      border-color: rgba(59, 130, 246, 0.4);
+    }
+
+    /* Content Area & Table */
+    .traffic-content-area {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 220px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .traffic-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      text-align: left;
+    }
+    .traffic-table th {
+      position: sticky;
+      top: 0;
+      background: #121522;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      z-index: 2;
+    }
+    .traffic-table td {
+      padding: 9px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 11px;
+    }
+    .traffic-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Visual Distribution Bar */
+    .traffic-bar-track {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 3px;
+      overflow: hidden;
+      display: flex;
+      margin-top: 4px;
+    }
+    .traffic-bar-down {
+      background: var(--accent-emerald);
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .traffic-bar-up {
+      background: var(--accent-blue);
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .traffic-down-val { color: var(--accent-emerald); }
+    .traffic-up-val { color: #60a5fa; }
+    .traffic-total-val { font-weight: 700; color: var(--text-main); }
+
+    /* Node Inspector Traffic Box */
+    .insp-traffic-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 10px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Phase 1 Redesign Utilities & Compact Components */
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .spin {
+      animation: spin 0.9s linear infinite;
+    }
+
+    /* Unified Status + Connect Card */
+    .status-card {
+      padding: 14px;
+      gap: 10px;
+    }
+    .status-actions-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-top: 2px;
+    }
+    .status-card .btn-main-toggle {
+      flex: 1;
+      padding: 10px 14px;
+      font-size: 13px;
+      border-radius: 10px;
+    }
+    .btn-view-logs-inline {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      padding: 9px 11px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.14);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .btn-view-logs-inline:hover {
+      background: rgba(239, 68, 68, 0.24);
+      color: #ffffff;
+    }
+    .status-card.has-error .btn-view-logs-inline {
+      display: inline-flex;
+    }
+
+    /* Minimalist Traffic Card */
+    .traffic-card {
+      padding: 11px 13px;
+      gap: 8px;
+    }
+
+    /* Grouped Network Controls Panel */
+    .controls-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 4px 12px;
+      display: flex;
+      flex-direction: column;
+    }
+    .control-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      gap: 8px;
+    }
+    .control-item:last-child {
+      border-bottom: none;
+    }
+    .control-item-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .control-badge-mini {
+      font-size: 9px;
+      background: rgba(37, 99, 235, 0.22);
+      color: #60a5fa;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    /* Compact Topbar & Unified Toolbar */
+    .topbar {
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .search-box {
+      height: 38px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      padding: 0 10px 0 12px;
+      gap: 8px;
+      transition: border-color 0.2s;
+    }
+    .search-box:focus-within {
+      border-color: var(--accent-indigo);
+    }
+    .search-box svg {
+      position: static;
+      left: auto;
+      flex-shrink: 0;
+    }
+    .search-box .search-input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+    }
+    .search-count-badge {
+      font-size: 11px;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-card);
+      border-radius: 6px;
+      padding: 2px 7px;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .topbar .btn-action {
+      height: 38px;
+      padding: 0 14px;
+      white-space: nowrap;
+    }
+    .topbar-icon-btn {
+      padding: 0 12px;
+      gap: 6px;
+    }
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .filter-select {
+      height: 32px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      border-radius: 8px;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+    }
+    .filter-select:focus {
+      border-color: var(--accent-blue);
+    }
+    .toolbar-row .btn-action {
+      height: 32px;
+      padding: 0 10px;
+    }
+
+    /* Unified Scrollbars Across Panels & Modals */
+    .logs-body,
+    .traffic-content-area,
+    #subsListContainer,
+    .modal-box {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+    }
+    .logs-body::-webkit-scrollbar,
+    .traffic-content-area::-webkit-scrollbar,
+    #subsListContainer::-webkit-scrollbar,
+    .modal-box::-webkit-scrollbar {
+      width: 6px;
+    }
+    .logs-body::-webkit-scrollbar-thumb,
+    .traffic-content-area::-webkit-scrollbar-thumb,
+    #subsListContainer::-webkit-scrollbar-thumb,
+    .modal-box::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+    }
+
+    /* Hover-Reveal Node Card Actions & Active Pill */
+    .node-card {
+      padding: 13px 16px;
+      gap: 12px;
+    }
+    .node-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .node-actions-secondary {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      max-width: 0;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transition: max-width 0.18s ease, opacity 0.15s ease;
+    }
+    .node-card:hover .node-actions-secondary,
+    .node-card:focus-within .node-actions-secondary,
+    .node-card.selected .node-actions-secondary {
+      max-width: 140px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .node-status-slot {
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      transition: max-width 0.18s ease, opacity 0.15s ease;
+    }
+    .node-card:not(.active) .node-status-slot {
+      max-width: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .node-card:not(.active):hover .node-status-slot,
+    .node-card:not(.active):focus-within .node-status-slot,
+    .node-card:not(.active).selected .node-status-slot,
+    .node-card.active .node-status-slot {
+      max-width: 120px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .active-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-emerald);
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      letter-spacing: 0.3px;
+    }
+    .active-pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 6px var(--accent-emerald);
+    }
+
+    /* Dark Confirm Modal */
+    .confirm-modal-box {
+      max-width: 420px;
+      padding: 20px 22px;
+      gap: 14px;
+    }
+    .confirm-modal-msg {
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--text-muted);
+    }
+    .confirm-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .btn-confirm-danger {
+      background: rgba(239, 68, 68, 0.18);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-confirm-danger:hover {
+      background: var(--accent-red);
+      color: #ffffff;
+    }
+
+    /* Analytics Modal Polish */
+    .traffic-hide-empty-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .traffic-hide-empty-label input {
+      accent-color: var(--accent-blue);
+      cursor: pointer;
+    }
+    .traffic-row-current td {
+      background: rgba(59, 130, 246, 0.08);
+    }
+
+    /* Responsive Mobile & Narrow Window Layout */
+    @media (max-width: 860px) {
+      body {
+        flex-direction: column;
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+      }
+      #sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-card);
+        overflow-y: visible;
+      }
+      #main {
+        padding: 16px;
+        min-height: 60vh;
+      }
+      .topbar {
+        flex-wrap: wrap;
+      }
+      .search-box {
+        min-width: 100%;
+      }
+      .node-actions-secondary,
+      .node-card:not(.active) .node-status-slot {
+        max-width: none;
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .inspector-top-layout {
+        flex-direction: column;
+        align-items: center;
+      }
+      .inspector-meta-col {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Left Sidebar -->
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <div class="brand-title">XHM Manager</div>
+    </div>
+
+    <!-- Unified Status & Connection Card -->
+    <div class="status-card" id="statusCard">
+      <div class="status-header">
+        <div class="status-badge">
+          <span class="status-dot"></span>
+          <span id="statusLabel">DISCONNECTED</span>
+        </div>
+        <span id="coreBadge" style="font-size: 11px; color: var(--text-dim); text-transform: uppercase;">None</span>
+      </div>
+
+      <div>
+        <div class="active-tag" id="activeTag">No Active Proxy</div>
+        <div class="active-endpoint" id="activeEndpoint">Select a server from the list</div>
+      </div>
+
+      <div id="webTestRow" style="display: none; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);">
+        <button class="btn-check-web" id="btnTestWeb" onclick="testRealConnectivity()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span>Test Speed</span>
+        </button>
+        <span id="webTestResult" style="font-size: 11px; font-family: monospace; color: var(--text-muted);"></span>
+      </div>
+
+      <div class="status-actions-row">
+        <button class="btn-main-toggle" id="btnMainToggle" onclick="handleMainToggle()">
+          <span>Connect</span>
+        </button>
+        <button class="btn-view-logs-inline" id="btnViewLogsInline" onclick="if(!document.getElementById('logsDrawer').classList.contains('open')) toggleLogsDrawer();" title="Inspect core error logs">
+          <span>View Logs</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Minimalist Speed & Session Card -->
+    <div class="traffic-card" id="trafficCard">
+      <div class="speed-grid">
+        <div class="speed-item speed-down">
+          <div class="speed-label">
+            <svg style="width: 12px; height: 12px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            <span>Download</span>
+          </div>
+          <div class="speed-val" id="downSpeedVal">0 B/s</div>
+        </div>
+        <div class="speed-item speed-up">
+          <div class="speed-label">
+            <svg style="width: 12px; height: 12px; fill: currentColor;" viewBox="0 0 24 24"><path d="M5 15h4v6h6v-6h4l-7-7-7 7zm14-10v-2H5v2h14z"/></svg>
+            <span>Upload</span>
+          </div>
+          <div class="speed-val" id="upSpeedVal">0 B/s</div>
+        </div>
+      </div>
+      <div class="usage-row">
+        <span>Down: <strong id="downTotalVal" style="color: var(--text-main);">0 B</strong></span>
+        <span>Up: <strong id="upTotalVal" style="color: var(--text-main);">0 B</strong></span>
+      </div>
+    </div>
+
+    <!-- Compact Network Controls Panel -->
+    <div class="controls-panel">
+      <div class="control-item" title="Routes all system traffic via virtual network adapter (xhm-tun)">
+        <div class="control-item-title">
+          <span>TUN Mode</span>
+          <span class="control-badge-mini">xhm-tun</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="swTunMode" onchange="toggleTunMode(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="control-item" title="Configure desktop environment and browser proxy settings">
+        <div class="control-item-title">System Proxy</div>
+        <label class="switch">
+          <input type="checkbox" id="swSystemProxy" onchange="toggleSystemProxy(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="control-item" title="Allow devices on your local Wi-Fi/LAN to connect via this proxy">
+        <div class="control-item-title">LAN Sharing</div>
+        <label class="switch">
+          <input type="checkbox" id="swLanShare" onchange="toggleLanSharing(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- CLI Terminal Command Copy -->
+    <button class="btn-copy-cli" onclick="copyTerminalProxy()" title="Copy shell export commands for terminal">
+      <svg style="width: 13px; height: 13px; fill: currentColor;" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+      <span>Copy Terminal Proxy (CLI)</span>
+    </button>
+
+    <!-- Footer Stats -->
+    <div class="sidebar-footer">
+      <div class="footer-row">
+        <span>Uptime</span>
+        <span id="uptimeLabel">00:00:00</span>
+      </div>
+      <div class="footer-row">
+        <span>Local Proxy Port</span>
+        <span id="portLabel">127.0.0.1:10850</span>
+      </div>
+      <div class="footer-row">
+        <span>Total Servers</span>
+        <span id="totalNodesLabel">0</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right Main Area -->
+  <main id="main">
+    <!-- Top Action Bar -->
+    <div class="topbar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24"><path d="M10 18a7.952 7.952 0 0 0 4.897-1.688l4.396 4.396 1.414-1.414-4.396-4.396A7.952 7.952 0 0 0 18 10c0-4.411-3.589-8-8-8s-8 3.589-8 8 3.589 8 8 8zm0-14c3.309 0 6 2.691 6 6s-2.691 6-6 6-6-2.691-6-6 2.691-6 6-6z"/></svg>
+        <input type="text" class="search-input" id="searchInput" placeholder="Search servers (tag, host, protocol, profile)... [Ctrl+K]" oninput="handleSearch(this.value)">
+        <span class="search-count-badge" id="visibleCounter">0</span>
+      </div>
+
+      <button class="btn-action topbar-icon-btn" id="btnPingAll" onclick="pingAllNodes()" title="Measure latency of all servers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span>Ping</span>
+      </button>
+
+      <button class="btn-action topbar-icon-btn" id="btnTrafficStats" onclick="openTrafficModal()" title="View Internet Traffic Analytics">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span>Analytics</span>
+      </button>
+
+      <button class="btn-action topbar-icon-btn" id="btnToggleLogs" onclick="toggleLogsDrawer()" title="Toggle live core logs viewer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        <span>Logs</span>
+      </button>
+
+      <button class="btn-action topbar-icon-btn" id="btnManageSubs" onclick="openSubsModal()" title="Manage remote subscriptions">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+        <span>Subs</span>
+      </button>
+
+      <button class="btn-action btn-primary" onclick="openAddModal()" title="Import proxy link or subscription URL">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>Add</span>
+      </button>
+    </div>
+
+    <!-- Filter & Sort Toolbar -->
+    <div class="toolbar-row">
+      <div class="toolbar-left">
+        <select id="filterSelect" class="filter-select" onchange="setFilter(this.value)" title="Filter servers by source or profile">
+          <option value="all">All Servers</option>
+          <option value="subs">Subscriptions</option>
+          <option value="custom">Custom</option>
+        </select>
+
+        <button class="btn-action" id="btnClearCustom" onclick="clearAllCustomNodes()" style="display: none; padding: 6px 10px; font-size: 11px; color: var(--accent-rose); border-color: rgba(244,63,94,0.3); align-items: center; gap: 5px;" title="Clear all custom configs">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>Clear Custom</span>
+        </button>
+      </div>
+
+      <div class="toolbar-right">
+        <select id="sortSelect" class="filter-select" onchange="handleSortChange(this.value)" title="Sort server list">
+          <option value="default">Sort: Default</option>
+          <option value="fastest">Sort: Lowest Latency</option>
+          <option value="name">Sort: Name (A-Z)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Scrollable Server List -->
+    <div class="nodes-container" id="nodesContainer">
+      <!-- Dynamic server cards -->
+    </div>
+
+    <!-- Collapsible Live Logs Drawer -->
+    <div class="logs-drawer" id="logsDrawer">
+      <div class="logs-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="status-dot" style="background: #34d399; box-shadow: 0 0 8px rgba(52,211,153,0.5);"></span>
+          <span style="font-weight: 700; font-size: 12px; color: var(--text-main);">Live Core Logs</span>
+          <span id="logsCountBadge" style="font-size: 10px; color: var(--text-dim); font-family: monospace;">0 lines</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); cursor: pointer;">
+            <input type="checkbox" id="chkAutoScroll" checked style="cursor: pointer;">
+            <span>Auto-scroll</span>
+          </label>
+          <button class="btn-log-action" onclick="copyAllLogs()" title="Copy all logs" style="display: inline-flex; align-items: center; gap: 4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy</span>
+          </button>
+          <button class="btn-log-action" onclick="clearLogs()" title="Clear log file" style="display: inline-flex; align-items: center; gap: 4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span>Clear</span>
+          </button>
+          <button class="btn-log-action" onclick="toggleLogsDrawer()" title="Close logs">&times;</button>
+        </div>
+      </div>
+      <div class="logs-body" id="logsTerminal">
+        <div style="color: var(--text-dim); text-align: center; padding: 20px;">No logs recorded yet.</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Modal Dialog: Add Config / Subscription -->
+  <div class="modal-overlay" id="addModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg id="modalTitleIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <h3 class="modal-title" id="modalTitle">Add Configuration or Subscription</h3>
+        </div>
+        <button class="modal-close" onclick="closeAddModal(true)">&times;</button>
+      </div>
+
+      <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+        Paste proxy links (<code>npvt-ssh://</code>, <code>vless://</code>, <code>vmess://</code>, <code>trojan://</code>, <code>ss://</code>, <code>ssh://</code>) or a subscription URL (<code>http/https</code>). Multiple links separated by newlines are fully supported.
+      </p>
+
+      <textarea class="modal-textarea" id="txtModalLinks" placeholder="npvt-ssh://...&#10;vless://...&#10;vmess://...&#10;ssh://user:pass@host:port&#10;https://example.com/sub/token"></textarea>
+
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <input type="text" id="txtModalName" class="search-input" placeholder="Custom Alias / Name (optional)" style="padding: 9px 12px;">
+      </div>
+
+      <div id="modalStatusMsg" style="font-size: 12px; min-height: 16px;"></div>
+
+      <div class="modal-actions">
+        <button class="btn-action" onclick="pasteModalClipboard()" style="display: inline-flex; align-items: center; gap: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+          <span>Paste</span>
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-action" onclick="closeAddModal(true)">Cancel</button>
+          <button class="btn-action btn-primary" id="btnSubmitAdd" onclick="submitAddConfig()">Import Nodes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Dialog: Node Details / Inspector & QR Code -->
+  <div class="modal-overlay" id="inspectorModal">
+    <div class="modal-box" style="width: 660px; max-width: 95vw; max-height: 88vh; overflow-y: auto;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="proto-badge" id="inspProtoBadge">VLESS</span>
+          <h3 class="modal-title" id="inspTitle">Node Inspector</h3>
+        </div>
+        <button class="modal-close" onclick="closeInspectorModal()">&times;</button>
+      </div>
+
+      <div class="inspector-top-layout">
+        <div class="inspector-qr-wrap" id="inspQrBox" title="QR Code for Mobile Scanning">
+          <!-- QRCode canvas/img injected here -->
+        </div>
+        <div class="inspector-meta-col">
+          <div style="font-size: 15px; font-weight: 700; color: var(--text-main);" id="inspTag">Server Tag</div>
+          <div style="font-size: 12px; color: var(--text-muted); font-family: monospace;" id="inspEndpoint">1.2.3.4:443</div>
+          <div style="font-size: 11px; color: var(--text-dim);" id="inspProfile">Profile: Custom</div>
+
+          <div class="inspector-actions-row">
+            <button class="btn-action btn-sm" onclick="copyInspLink()" title="Copy shareable proxy link">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>Copy Link</span>
+            </button>
+            <button class="btn-action btn-sm" id="btnDownloadQr" onclick="downloadQrCode()" title="Save readable QR code image (PNG)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Save QR</span>
+            </button>
+          </div>
+
+          <!-- Recommended Client Apps Section -->
+          <div class="insp-apps-card" id="inspAppsCard">
+            <div class="insp-apps-header">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+              <span>Recommended Client Apps</span>
+            </div>
+            <div id="inspAppsList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inspector-grid" id="inspGrid" style="margin-bottom: 12px;">
+        <!-- Dynamic inspector items -->
+      </div>
+
+      <!-- Traffic Usage Box in Inspector -->
+      <div id="inspTrafficBox"></div>
+
+      <div>
+        <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Raw Link / Configuration</div>
+        <textarea class="modal-textarea" id="inspRawLink" readonly style="height: 70px; font-size: 11px;"></textarea>
+      </div>
+
+      <div class="modal-actions" style="justify-content: flex-end;">
+        <button class="btn-action" onclick="closeInspectorModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Dialog: Subscription Manager -->
+  <div class="modal-overlay" id="subsModal">
+    <div class="modal-box" style="width: 620px; max-height: 85vh; overflow-y: auto;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+          <h3 class="modal-title">Subscription Manager</h3>
+        </div>
+        <button class="modal-close" onclick="closeSubsModal()">&times;</button>
+      </div>
+
+      <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+        Manage remote subscriptions. Updating fetches the newest configs and syncs your custom node library.
+      </p>
+
+      <div id="subsListContainer" style="display: flex; flex-direction: column; gap: 8px; margin: 10px 0; max-height: 280px; overflow-y: auto;">
+        <!-- Dynamic subscription items -->
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-action" onclick="openAddModal()" style="display: inline-flex; align-items: center; gap: 6px;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>Add Subscription</span>
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-action" onclick="closeSubsModal()">Close</button>
+          <button class="btn-action btn-primary" id="btnUpdateAllSubs" onclick="updateAllSubscriptions()" style="display: inline-flex; align-items: center; gap: 6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <span>Update All</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Dialog: Traffic & Usage Analytics -->
+  <div class="modal-overlay" id="trafficModal">
+    <div class="modal-box modal-box-traffic">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(59, 130, 246, 0.15); display: flex; align-items: center; justify-content: center; color: var(--accent-blue);">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          </div>
+          <div>
+            <h3 class="modal-title">Traffic & Usage Analytics</h3>
+            <div class="traffic-header-subtitle">Persistent data consumption tracking across nodes, sessions, and timeframes</div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeTrafficModal()">&times;</button>
+      </div>
+
+      <!-- Filters & Period Bar -->
+      <div class="traffic-filter-bar">
+        <div class="traffic-filter-group">
+          <label style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Configuration:</label>
+          <select id="trafficNodeSelect" class="traffic-select" onchange="onTrafficNodeChange(this.value)">
+            <option value="all">Global (All Configurations)</option>
+          </select>
+        </div>
+
+        <div class="traffic-filter-group" id="trafficPeriodControls">
+          <!-- Dynamic period selector -->
+        </div>
+
+        <div class="traffic-filter-group" style="margin-left: auto;">
+          <button class="btn-action" onclick="refreshTrafficModal()" title="Reload data" style="padding: 5px 10px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <span>Refresh</span>
+          </button>
+          <button class="btn-action" onclick="confirmResetTraffic()" title="Reset tracked statistics" style="padding: 5px 10px; font-size: 11px; color: var(--accent-rose); border-color: rgba(244,63,94,0.3); display: inline-flex; align-items: center; gap: 4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span>Reset Stats</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Top KPI Cards -->
+      <div class="traffic-kpi-grid">
+        <div class="traffic-kpi-card accent-emerald">
+          <div class="traffic-kpi-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Session</span>
+          </div>
+          <div class="traffic-kpi-value" id="kpiSessionTotal">0 B</div>
+          <div class="traffic-kpi-sub">
+            <span>↓ <span id="kpiSessionDown" class="traffic-down-val">0 B</span></span>
+            <span>↑ <span id="kpiSessionUp" class="traffic-up-val">0 B</span></span>
+            <span id="kpiSessionDuration" style="color: var(--text-muted);">Inactive</span>
+          </div>
+        </div>
+
+        <div class="traffic-kpi-card">
+          <div class="traffic-kpi-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>Today</span>
+          </div>
+          <div class="traffic-kpi-value" id="kpiTodayTotal">0 B</div>
+          <div class="traffic-kpi-sub">
+            <span>↓ <span id="kpiTodayDown" class="traffic-down-val">0 B</span></span>
+            <span>↑ <span id="kpiTodayUp" class="traffic-up-val">0 B</span></span>
+          </div>
+        </div>
+
+        <div class="traffic-kpi-card accent-indigo">
+          <div class="traffic-kpi-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>This Month</span>
+          </div>
+          <div class="traffic-kpi-value" id="kpiMonthTotal">0 B</div>
+          <div class="traffic-kpi-sub">
+            <span>↓ <span id="kpiMonthDown" class="traffic-down-val">0 B</span></span>
+            <span>↑ <span id="kpiMonthUp" class="traffic-up-val">0 B</span></span>
+          </div>
+        </div>
+
+        <div class="traffic-kpi-card accent-amber">
+          <div class="traffic-kpi-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            <span>All-Time Total</span>
+          </div>
+          <div class="traffic-kpi-value" id="kpiAllTotal">0 B</div>
+          <div class="traffic-kpi-sub">
+            <span>↓ <span id="kpiAllDown" class="traffic-down-val">0 B</span></span>
+            <span>↑ <span id="kpiAllUp" class="traffic-up-val">0 B</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="traffic-tabs">
+        <button class="traffic-tab-btn active" id="tabTrafficHourly" onclick="switchTrafficTab('hourly')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Hourly</span>
+        </button>
+        <button class="traffic-tab-btn" id="tabTrafficDaily" onclick="switchTrafficTab('daily')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>Daily</span>
+        </button>
+        <button class="traffic-tab-btn" id="tabTrafficMonthly" onclick="switchTrafficTab('monthly')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>Monthly</span>
+        </button>
+        <button class="traffic-tab-btn" id="tabTrafficYearly" onclick="switchTrafficTab('yearly')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>Yearly</span>
+        </button>
+        <button class="traffic-tab-btn" id="tabTrafficNodes" onclick="switchTrafficTab('nodes')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          <span>By Config</span>
+        </button>
+        <button class="traffic-tab-btn" id="tabTrafficSessions" onclick="switchTrafficTab('sessions')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span>Sessions Log</span>
+        </button>
+      </div>
+
+      <!-- Main Content Area -->
+      <div class="traffic-content-area" id="trafficContentArea">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Dark Confirmation Modal -->
+  <div class="modal-overlay" id="confirmModal" style="z-index: 1200;">
+    <div class="modal-box confirm-modal-box">
+      <div class="modal-header" style="margin-bottom: 0;">
+        <h3 class="modal-title" id="confirmModalTitle">Confirm Action</h3>
+        <button class="modal-close" id="confirmModalClose">&times;</button>
+      </div>
+      <div class="confirm-modal-msg" id="confirmModalMessage"></div>
+      <div class="confirm-modal-actions">
+        <button class="btn-action" id="confirmModalCancel">Cancel</button>
+        <button class="btn-confirm-danger" id="confirmModalOk">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    let allNodes = [];
+    let currentFilter = 'all';
+    let currentSort = 'default';
+    let searchQuery = '';
+    let appStatus = { connected: false, active_node: null };
+    let isConnecting = false;
+    let connectingNodeKey = null;
+
+    // Toast Notification System
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      let iconSvg = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+      if (type === 'success') {
+        iconSvg = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+      } else if (type === 'error') {
+        iconSvg = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      }
+      toast.innerHTML = `<span style="display: inline-flex; align-items: center;">${iconSvg}</span> <span>${escapeHtml(message)}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(12px) scale(0.96)';
+        toast.style.transition = 'all 0.25s ease';
+        setTimeout(() => toast.remove(), 260);
+      }, 3000);
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        appStatus = await res.json();
+        updateStatusUI();
+      } catch (e) {
+        console.error('Status fetch error:', e);
+      }
+    }
+
+    async function fetchNodes() {
+      try {
+        const res = await fetch('/api/nodes');
+        allNodes = await res.json();
+        populateFilterDropdown();
+        renderNodes();
+        updateStatusUI();
+        fetchNodeTrafficSummary();
+      } catch (e) {
+        console.error('Nodes fetch error:', e);
+      }
+    }
+
+    function updateStatusUI() {
+      const card = document.getElementById('statusCard');
+      const label = document.getElementById('statusLabel');
+      const activeTag = document.getElementById('activeTag');
+      const activeEndpoint = document.getElementById('activeEndpoint');
+      const mainBtn = document.getElementById('btnMainToggle');
+      const coreBadge = document.getElementById('coreBadge');
+      const uptimeLabel = document.getElementById('uptimeLabel');
+      const portLabel = document.getElementById('portLabel');
+      const swProxy = document.getElementById('swSystemProxy');
+      const swLan = document.getElementById('swLanShare');
+
+      // Traffic elements
+      const downSpeedEl = document.getElementById('downSpeedVal');
+      const upSpeedEl = document.getElementById('upSpeedVal');
+      const downTotalEl = document.getElementById('downTotalVal');
+      const upTotalEl = document.getElementById('upTotalVal');
+      const sessionTotalBadge = document.getElementById('sessionTotalBadge');
+
+      const webRow = document.getElementById('webTestRow');
+      if (appStatus.connected && appStatus.active_node) {
+        card.classList.remove('has-error');
+        card.classList.add('connected');
+        label.textContent = 'CONNECTED';
+        activeTag.textContent = appStatus.active_node.tag || 'Active Proxy';
+        activeEndpoint.textContent = `${appStatus.active_node.server}:${appStatus.active_node.port} (${(appStatus.active_node.type || '').toUpperCase()})`;
+        activeEndpoint.classList.remove('error-text');
+        mainBtn.innerHTML = '<span>Disconnect</span>';
+        mainBtn.classList.add('connected');
+        coreBadge.textContent = appStatus.core || 'Sing-box';
+        uptimeLabel.textContent = appStatus.uptime || '00:00:00';
+        if (webRow) webRow.style.display = 'flex';
+      } else {
+        card.classList.remove('connected');
+        mainBtn.classList.remove('connected');
+        coreBadge.textContent = 'None';
+        uptimeLabel.textContent = '00:00:00';
+        if (webRow) {
+          webRow.style.display = 'none';
+          const resLabel = document.getElementById('webTestResult');
+          if (resLabel) resLabel.textContent = '';
+        }
+
+        const readyNode = selectedNodeKey ? findNode(selectedNodeKey) : null;
+        const isReconnecting = !!appStatus.reconnecting || (appStatus.status_msg && appStatus.status_msg.includes('🔄'));
+        const isErr = !isReconnecting && appStatus.status_msg && /error|failed|fault|invalid|cannot|shutting down|closed/i.test(appStatus.status_msg);
+        if (isReconnecting) {
+          card.classList.remove('has-error');
+          label.textContent = 'RECONNECTING';
+          activeTag.textContent = 'Restoring Tunnel...';
+          activeEndpoint.textContent = appStatus.status_msg || 'Reconnecting in background...';
+          activeEndpoint.classList.remove('error-text');
+          mainBtn.innerHTML = '<span>Connecting...</span>';
+        } else if (isErr) {
+          card.classList.add('has-error');
+          label.textContent = 'FAILED';
+          activeTag.textContent = 'Connection Error';
+          activeEndpoint.textContent = appStatus.status_msg;
+          activeEndpoint.classList.add('error-text');
+          mainBtn.innerHTML = readyNode ? `<span>Retry ${escapeHtml((readyNode.tag || readyNode.server || '').slice(0, 18))}</span>` : '<span>Connect</span>';
+        } else if (readyNode) {
+          card.classList.remove('has-error');
+          label.textContent = 'READY';
+          const readyName = readyNode.tag || readyNode.server;
+          activeTag.textContent = readyName;
+          activeEndpoint.textContent = `${readyNode.server}:${readyNode.port} (${(readyNode.type || '').toUpperCase()})`;
+          activeEndpoint.classList.remove('error-text');
+          mainBtn.innerHTML = `<span>Connect to ${escapeHtml(readyName.length > 16 ? readyName.slice(0, 15) + '…' : readyName)}</span>`;
+        } else {
+          card.classList.remove('has-error');
+          label.textContent = 'DISCONNECTED';
+          activeTag.textContent = 'No Active Proxy';
+          activeEndpoint.textContent = 'Select a server from the list';
+          activeEndpoint.classList.remove('error-text');
+          mainBtn.innerHTML = '<span>Connect</span>';
+        }
+      }
+
+      // Update Live Traffic & Speed counters
+      if (appStatus.traffic) {
+        downSpeedEl.textContent = appStatus.traffic.down_speed_fmt || '0 B/s';
+        upSpeedEl.textContent = appStatus.traffic.up_speed_fmt || '0 B/s';
+        downTotalEl.textContent = appStatus.traffic.down_total_fmt || '0 B';
+        upTotalEl.textContent = appStatus.traffic.up_total_fmt || '0 B';
+        if (sessionTotalBadge) sessionTotalBadge.textContent = `Total: ${appStatus.traffic.total_fmt || '0 B'}`;
+        if (swLan) swLan.checked = !!appStatus.traffic.allow_lan;
+
+        // Also update live session KPI in Traffic Modal if open and relevant
+        const tModal = document.getElementById('trafficModal');
+        if (tModal && tModal.classList.contains('open') && appStatus.connected && appStatus.active_node) {
+          const activeKey = getTrafficNodeKey(appStatus.active_node);
+          if (currentTrafficNode === 'all' || currentTrafficNode === activeKey) {
+            const kTot = document.getElementById('kpiSessionTotal');
+            const kDn = document.getElementById('kpiSessionDown');
+            const kUp = document.getElementById('kpiSessionUp');
+            const kDur = document.getElementById('kpiSessionDuration');
+            if (kTot) kTot.textContent = appStatus.traffic.total_fmt || '0 B';
+            if (kDn) kDn.textContent = appStatus.traffic.down_total_fmt || '0 B';
+            if (kUp) kUp.textContent = appStatus.traffic.up_total_fmt || '0 B';
+            if (kDur) {
+              kDur.textContent = 'Active now';
+              kDur.style.color = 'var(--accent-emerald)';
+            }
+          }
+        }
+      } else {
+        downSpeedEl.textContent = '0 B/s';
+        upSpeedEl.textContent = '0 B/s';
+        downTotalEl.textContent = '0 B';
+        upTotalEl.textContent = '0 B';
+        if (sessionTotalBadge) sessionTotalBadge.textContent = 'Total: 0 B';
+        if (swLan) swLan.checked = false;
+      }
+
+      if (appStatus.proxy_port) {
+        const host = appStatus.allow_lan ? '0.0.0.0' : '127.0.0.1';
+        portLabel.textContent = `${host}:${appStatus.proxy_port}`;
+      }
+      swProxy.checked = !!appStatus.system_proxy;
+      const swTun = document.getElementById('swTunMode');
+      if (swTun && appStatus.tun_mode !== undefined) {
+        swTun.checked = !!appStatus.tun_mode;
+      }
+
+      updateActiveCardInDOM();
+    }
+
+    function getNodeId(node) {
+      if (!node) return '';
+      if (node.id) return String(node.id);
+      return `${node.server || ''}:${node.port || ''}:${(node.type || '').toLowerCase()}:${node.tag || ''}`;
+    }
+
+    function isNodeActive(node) {
+      if (!appStatus.connected || !appStatus.active_node || !node) return false;
+      const active = appStatus.active_node;
+      if (active.id && node.id) return String(active.id) === String(node.id);
+      const sameEndpoint = active.server === node.server && Number(active.port) === Number(node.port);
+      if (!sameEndpoint) return false;
+      if (active.tag && node.tag) return active.tag === node.tag;
+      return true;
+    }
+
+    function findNode(nodeId, server, port, type) {
+      if (nodeId) {
+        const byId = allNodes.find(n => getNodeId(n) === nodeId);
+        if (byId) return byId;
+      }
+      return allNodes.find(n =>
+        n.server === server &&
+        Number(n.port) === Number(port) &&
+        (!type || (n.type || '').toLowerCase() === (type || '').toLowerCase())
+      );
+    }
+
+    function updateActiveCardInDOM() {
+      const cards = document.querySelectorAll('.node-card');
+
+      cards.forEach(card => {
+        const cardId = card.dataset.id || '';
+        const srv = card.dataset.server;
+        const prt = Number(card.dataset.port);
+        const ptype = card.dataset.type || '';
+        const node = findNode(cardId, srv, prt, ptype);
+        const isThisActive = node
+          ? isNodeActive(node)
+          : !!(appStatus.connected && appStatus.active_node && (
+              (appStatus.active_node.id && cardId && String(appStatus.active_node.id) === cardId) ||
+              (!appStatus.active_node.id && appStatus.active_node.server === srv && Number(appStatus.active_node.port) === prt)
+            ));
+        const nodeKey = cardId || `${srv}:${prt}`;
+        const isThisConnecting = isConnecting && connectingNodeKey === nodeKey;
+        const slot = card.querySelector('.node-status-slot');
+
+        if (isThisActive) {
+          if (!card.classList.contains('active')) card.classList.add('active');
+          if (slot && !isConnecting) {
+            slot.innerHTML = '<span class="active-pill" title="Active server (disconnect from sidebar or double-click)"><span class="active-pill-dot"></span>Active</span>';
+          }
+        } else {
+          if (card.classList.contains('active')) card.classList.remove('active');
+          if (slot) {
+            const btnDisabled = isThisConnecting ? 'disabled style="opacity:0.6;"' : '';
+            const btnLabel = isThisConnecting ? 'Connecting...' : 'Connect';
+            slot.innerHTML = `<button class="btn-connect-card" ${btnDisabled} onclick="connectNode('${escapeHtml(cardId)}')">${btnLabel}</button>`;
+          }
+        }
+      });
+    }
+
+    function handleSortChange(val) {
+      currentSort = val;
+      renderNodes();
+    }
+
+    const PROTOCOL_RECOMMENDED_APPS = {
+      vless: {
+        primary: 'v2rayNG / Sing-box',
+        android: 'v2rayNG, Sing-box, NekoBox, Husi',
+        ios: 'Streisand, Shadowrocket, Sing-box, V2Box',
+        desktop: 'v2rayN, Sing-box, Clash Verge Rev, NekoRay'
+      },
+      vmess: {
+        primary: 'v2rayNG / Shadowrocket',
+        android: 'v2rayNG, Sing-box, NekoBox, V2Box',
+        ios: 'Shadowrocket, Streisand, V2Box, Sing-box',
+        desktop: 'v2rayN, Clash Verge Rev, Sing-box'
+      },
+      trojan: {
+        primary: 'v2rayNG / Streisand',
+        android: 'v2rayNG, Sing-box, NekoBox, Igniter',
+        ios: 'Shadowrocket, Streisand, Sing-box',
+        desktop: 'v2rayN, Clash Verge Rev, NekoRay'
+      },
+      shadowsocks: {
+        primary: 'Outline / v2rayNG',
+        android: 'Outline, v2rayNG, Shadowsocks, Sing-box',
+        ios: 'Outline, Shadowrocket, Streisand, Potatso',
+        desktop: 'Outline, v2rayN, Clash Verge Rev'
+      },
+      hysteria2: {
+        primary: 'Sing-box / v2rayNG',
+        android: 'v2rayNG (v1.8+), Sing-box, NekoBox, Husi',
+        ios: 'Streisand, Shadowrocket, Sing-box, FoXray',
+        desktop: 'Clash Verge Rev, Sing-box, NekoRay'
+      },
+      tuic: {
+        primary: 'Sing-box / Streisand',
+        android: 'Sing-box, NekoBox, v2rayNG',
+        ios: 'Streisand, Shadowrocket, Sing-box',
+        desktop: 'Sing-box, Clash Verge Rev'
+      },
+      wireguard: {
+        primary: 'WireGuard',
+        android: 'WireGuard (Official), Sing-box',
+        ios: 'WireGuard (Official), Shadowrocket',
+        desktop: 'WireGuard (Official), Sing-box'
+      },
+      'npvt-ssh': {
+        primary: 'NPV Tunnel',
+        android: 'NPV Tunnel, NetMod Syna, HTTP Custom',
+        ios: 'NapsternetV (NPV), HTTP Injector',
+        desktop: 'NetMod Syna (PC), XHM CLI'
+      },
+      ssh: {
+        primary: 'Termius / SSH',
+        android: 'NPV Tunnel, Termius, ConnectBot',
+        ios: 'Termius, NapsternetV',
+        desktop: 'Terminal (ssh), PuTTY, XHM CLI'
+      },
+      socks: {
+        primary: 'Telegram / SOCKS5',
+        android: 'v2rayNG, NekoBox, Telegram Proxy',
+        ios: 'Shadowrocket, Potatso Lite, Telegram Proxy',
+        desktop: 'Telegram Proxy, FoxyProxy, System Proxy'
+      }
+    };
+
+    function getRecommendedApps(proto) {
+      const p = (proto || '').toLowerCase();
+      if (p === 'ss') return PROTOCOL_RECOMMENDED_APPS.shadowsocks;
+      if (p === 'hy2') return PROTOCOL_RECOMMENDED_APPS.hysteria2;
+      if (p === 'socks5') return PROTOCOL_RECOMMENDED_APPS.socks;
+      return PROTOCOL_RECOMMENDED_APPS[p] || PROTOCOL_RECOMMENDED_APPS.vless;
+    }
+
+    function getSafeQrText(str) {
+      if (!str) return '';
+      const idx = str.indexOf('#');
+      if (idx === -1) return str;
+      try {
+        return str.slice(0, idx + 1) + encodeURI(decodeURI(str.slice(idx + 1)));
+      } catch (_) {
+        return str;
+      }
+    }
+
+    function renderNodes() {
+      const container = document.getElementById('nodesContainer');
+      const counter = document.getElementById('visibleCounter');
+      const totalCounter = document.getElementById('totalNodesLabel');
+
+      totalCounter.textContent = allNodes.length;
+
+      let filtered = allNodes.filter(n => {
+        if (currentFilter === 'subs' && (n.profile === 'Custom' || !n.profile)) return false;
+        if (currentFilter === 'custom' && (n.profile !== 'Custom' && !n.is_custom)) return false;
+        if (currentFilter.startsWith('profile:')) {
+          const targetProf = currentFilter.slice('profile:'.length);
+          if ((n.profile || '') !== targetProf) return false;
+        }
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          const matchTag = (n.tag || '').toLowerCase().includes(q);
+          const matchHost = (n.server || '').toLowerCase().includes(q);
+          const matchPort = String(n.port || '').includes(q);
+          const matchProto = (n.type || '').toLowerCase().includes(q);
+          const matchProfile = (n.profile || '').toLowerCase().includes(q);
+          if (!matchTag && !matchHost && !matchPort && !matchProto && !matchProfile) return false;
+        }
+        return true;
+      });
+
+      // Apply sorting
+      if (currentSort === 'fastest') {
+        filtered.sort((a, b) => {
+          if (a.ping === null && b.ping === null) return 0;
+          if (a.ping === null) return 1;
+          if (b.ping === null) return -1;
+          return a.ping - b.ping;
+        });
+      } else if (currentSort === 'name') {
+        filtered.sort((a, b) => {
+          const nameA = (a.tag || a.server || '').toLowerCase();
+          const nameB = (b.tag || b.server || '').toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+      }
+
+      if (counter) {
+        counter.textContent = filtered.length === allNodes.length
+          ? `${allNodes.length}`
+          : `${filtered.length} / ${allNodes.length}`;
+      }
+
+      if (filtered.length === 0) {
+        const hasActiveFilter = !!(searchQuery || currentFilter !== 'all');
+        container.innerHTML = `
+          <div style="text-align: center; padding: 60px 20px; color: var(--text-dim);">
+            <div style="display: flex; justify-content: center; margin-bottom: 12px; color: var(--text-dim);">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <div style="font-size: 14px; font-weight: 600; color: var(--text-muted);">No proxy servers found</div>
+            <div style="font-size: 12px; margin-top: 4px;">${hasActiveFilter ? 'No configs match your current search or filter.' : 'Click "+ Add" to import your proxies.'}</div>
+            ${hasActiveFilter ? `<button class="btn-action" style="margin: 14px auto 0; height: 32px; padding: 0 14px; font-size: 12px;" onclick="resetFilters()">Reset Filters</button>` : ''}
+          </div>
+        `;
+        return;
+      }
+
+      const protoLabels = {
+        shadowsocks: 'SS',
+        hysteria2: 'HY2',
+        wireguard: 'WG',
+        'npvt-ssh': 'NPVT'
+      };
+
+      container.innerHTML = filtered.map(node => {
+        const nodeId = getNodeId(node);
+        const isActive = isNodeActive(node);
+        const isThisConnecting = isConnecting && connectingNodeKey === nodeId;
+
+        const proto = (node.type || 'vless').toLowerCase();
+        const protoLabel = protoLabels[proto] || proto.toUpperCase();
+        const appInfo = getRecommendedApps(proto);
+        let pingText = 'Ping';
+        let pingClass = '';
+        if (node.ping !== null && node.ping !== undefined) {
+          pingText = `${node.ping} ms`;
+          if (node.ping < 160) pingClass = 'ping-green';
+          else if (node.ping < 350) pingClass = 'ping-amber';
+          else pingClass = 'ping-red';
+        }
+
+        const sourceLabel = node.profile || (node.is_custom ? 'Custom' : 'Proxy');
+        const btnText = isThisConnecting ? 'Connecting...' : 'Connect';
+
+        const statusSlotHtml = isActive
+          ? `<span class="active-pill" title="Active server (disconnect from sidebar or double-click)"><span class="active-pill-dot"></span>Active</span>`
+          : `<button class="btn-connect-card" ${isThisConnecting ? 'disabled style="opacity:0.6;"' : ''} onclick="connectNode('${escapeHtml(nodeId)}')">${btnText}</button>`;
+
+        return `
+          <div class="node-card ${isActive ? 'active' : ''} ${selectedNodeKey === nodeId ? 'selected' : ''}"
+               tabindex="0"
+               data-id="${escapeHtml(nodeId)}"
+               data-server="${escapeHtml(node.server)}"
+               data-port="${node.port}"
+               data-type="${escapeHtml(node.type || '')}"
+               onclick="selectNode(this, '${escapeHtml(nodeId)}')"
+               ondblclick="connectNode('${escapeHtml(nodeId)}')">
+            <div class="node-left">
+              <span class="proto-badge proto-${proto}" title="Protocol: ${escapeHtml(proto.toUpperCase())} | Recommended Client: ${escapeHtml(appInfo.primary)}">${escapeHtml(protoLabel)}</span>
+              <div class="node-info">
+                <div class="node-tag">${escapeHtml(node.tag || node.server)}</div>
+                <div class="node-meta">
+                  <span class="node-endpoint">${escapeHtml(node.server)}:${node.port}</span>
+                  <span class="source-tag">${escapeHtml(sourceLabel)}</span>
+                  <span class="app-hint-tag" title="Recommended: ${escapeHtml(appInfo.android + ' / ' + appInfo.ios)}">${escapeHtml(appInfo.primary)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="node-right" onclick="event.stopPropagation()">
+              <div class="node-actions-secondary">
+                <button class="btn-icon-card" title="View details, QR code & apps" onclick="openInspector('${escapeHtml(nodeId)}')">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                </button>
+                <button class="btn-icon-card" title="Copy proxy link" onclick="copyDirectNodeLink('${escapeHtml(nodeId)}')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                </button>
+                ${node.is_custom ? `
+                  <button class="btn-icon-card" title="Edit custom config" onclick="editNode('${escapeHtml(nodeId)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                  </button>
+                  <button class="btn-icon-card" title="Delete custom config" onclick="deleteNode('${escapeHtml(nodeId)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  </button>
+                ` : ''}
+              </div>
+              <span class="ping-badge ${pingClass}" onclick="pingSingle('${escapeHtml(node.server)}', ${node.port}, this, '${escapeHtml(nodeId)}')">${pingText}</span>
+              <div class="node-status-slot">${statusSlotHtml}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function handleMainToggle() {
+      if (appStatus.connected) {
+        await disconnectProxy();
+      } else if (allNodes.length > 0) {
+        const target = (selectedNodeKey ? findNode(selectedNodeKey) : null) || allNodes[0];
+        await connectNode(getNodeId(target));
+      } else {
+        showToast('No servers available. Add a configuration first.', 'info');
+      }
+    }
+
+    async function connectNode(nodeId) {
+      if (isConnecting) return;
+
+      const node = findNode(nodeId);
+      if (!node) {
+        showToast('Proxy configuration not found', 'error');
+        return;
+      }
+
+      if (isNodeActive(node)) {
+        await disconnectProxy();
+        return;
+      }
+
+      const resolvedId = getNodeId(node);
+      isConnecting = true;
+      connectingNodeKey = resolvedId;
+      renderNodes();
+      showToast(`Connecting to ${node.tag || (node.server + ':' + node.port)}...`, 'info');
+
+      try {
+        const res = await fetch('/api/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: node.id || resolvedId, server: node.server, port: Number(node.port), type: node.type })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(data.status_msg || 'Proxy connected successfully', 'success');
+          await fetchStatus();
+        } else {
+          showToast(data.status_msg || 'Connection failed', 'error');
+        }
+      } catch (e) {
+        showToast('Connection error: ' + e, 'error');
+      } finally {
+        isConnecting = false;
+        connectingNodeKey = null;
+        renderNodes();
+      }
+    }
+
+    async function disconnectProxy() {
+      try {
+        const res = await fetch('/api/disconnect', { method: 'POST' });
+        const data = await res.json();
+        await fetchStatus();
+        showToast(data.status_msg || 'Proxy disconnected', 'info');
+      } catch (e) {
+        showToast('Disconnect error: ' + e, 'error');
+      }
+    }
+
+    async function toggleTunMode(enable) {
+      const sw = document.getElementById('swTunMode');
+      if (sw) sw.disabled = true;
+      showToast(enable ? 'Starting built-in xhm-tun...' : 'Stopping xhm-tun...', 'info');
+      try {
+        const res = await fetch('/api/toggle-tun', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enable })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(data.status_msg || `Full System TUN Mode ${data.tun_mode ? 'Enabled' : 'Disabled'}`, 'info');
+        } else {
+          showToast(data.status_msg || 'TUN mode failed to start', 'error');
+        }
+        await fetchStatus();
+      } catch (e) {
+        showToast('TUN mode error: ' + e, 'error');
+        await fetchStatus();
+      } finally {
+        if (sw) sw.disabled = false;
+      }
+    }
+
+    async function toggleSystemProxy(enable) {
+      try {
+        await fetch('/api/toggle-system-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enable })
+        });
+        showToast(`GNOME System Proxy ${enable ? 'Enabled' : 'Disabled'}`, 'info');
+        await fetchStatus();
+      } catch (e) {
+        showToast('System proxy error: ' + e, 'error');
+      }
+    }
+
+    async function toggleLanSharing(enable) {
+      try {
+        await fetch('/api/toggle-lan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enable })
+        });
+        showToast(`LAN Sharing ${enable ? 'Enabled (0.0.0.0)' : 'Disabled (127.0.0.1)'}`, 'info');
+        await fetchStatus();
+      } catch (e) {
+        showToast('LAN sharing error: ' + e, 'error');
+      }
+    }
+
+    async function copyTerminalProxy() {
+      try {
+        const res = await fetch('/api/terminal-proxy-command', { method: 'POST' });
+        const data = await res.json();
+        if (data.command) {
+          await navigator.clipboard.writeText(data.command);
+          showToast('Copied CLI proxy export to clipboard!', 'success');
+        }
+      } catch (e) {
+        showToast('Failed to copy: ' + e, 'error');
+      }
+    }
+
+    async function pingSingle(server, port, el, nodeId) {
+      if (el) {
+        el.textContent = '...';
+        el.className = 'ping-badge';
+      }
+      try {
+        const target = nodeId ? findNode(nodeId, server, port) : null;
+        const sni = target && target.raw ? target.raw.sni : undefined;
+        const res = await fetch('/api/ping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ server, port: Number(port), sni })
+        });
+        const data = await res.json();
+        let updated = false;
+        allNodes.forEach(n => {
+          if ((nodeId && getNodeId(n) === nodeId) || (n.server === server && Number(n.port) === Number(port))) {
+            n.ping = data.ping;
+            updated = true;
+          }
+        });
+        if (updated) {
+          renderNodes();
+        }
+      } catch (e) {
+        console.error('Ping error:', e);
+      }
+    }
+
+    async function pingAllNodes() {
+      const btn = document.getElementById('btnPingAll');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> <span>Pinging...</span>';
+      }
+      showToast('Measuring latency for all servers...', 'info');
+
+      try {
+        const res = await fetch('/api/ping-all', { method: 'POST' });
+        const updated = await res.json();
+        allNodes = updated;
+        renderNodes();
+        const aliveCount = allNodes.filter(n => n.ping !== null).length;
+        showToast(`Ping completed: ${aliveCount}/${allNodes.length} servers responsive`, 'success');
+      } catch (err) {
+        showToast('Ping failed: ' + err, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> <span>Ping</span>';
+        }
+      }
+    }
+
+    async function deleteNode(nodeId) {
+      const node = findNode(nodeId);
+      const label = node ? (node.tag || `${node.server}:${node.port}`) : nodeId;
+      const ok = await showConfirmModal({
+        title: 'Delete Proxy Config',
+        message: `Remove custom proxy "${label}"? This action cannot be undone.`,
+        confirmText: 'Delete'
+      });
+      if (!ok) return;
+      try {
+        const res = await fetch('/api/delete-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: (node && node.id) || nodeId,
+            server: node ? node.server : '',
+            port: node ? Number(node.port) : 0,
+            type: node ? node.type : ''
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Custom proxy deleted', 'success');
+          await fetchNodes();
+        } else {
+          showToast('Failed to delete proxy', 'error');
+        }
+      } catch (e) {
+        showToast('Delete error: ' + e, 'error');
+      }
+    }
+
+    function editNode(nodeId) {
+      const node = findNode(nodeId);
+      if (!node) return;
+      let link = node.link || '';
+      if (!link) {
+        if (node.type === 'ssh') {
+          const raw = node.raw || {};
+          link = `ssh://${raw.user || ''}:${raw.password || ''}@${node.server}:${node.port}#${encodeURIComponent(node.tag || '')}`;
+        }
+      }
+      openAddModal(link, node.tag || '');
+    }
+
+    let selectedNodeKey = localStorage.getItem('xhm_selected_node') || null;
+
+    function selectNode(el, nodeId) {
+      selectedNodeKey = nodeId;
+      try { localStorage.setItem('xhm_selected_node', nodeId); } catch (_) {}
+      document.querySelectorAll('.node-card').forEach(c => c.classList.remove('selected'));
+      if (el) el.classList.add('selected');
+      if (!appStatus.connected) updateStatusUI();
+    }
+
+    async function copyDirectNodeLink(nodeId) {
+      const node = findNode(nodeId);
+      if (node && node.link) {
+        try {
+          await navigator.clipboard.writeText(node.link);
+          showToast(`Link for "${node.tag || node.server}" copied!`, 'success');
+        } catch (e) {
+          showToast('Failed to copy: ' + e, 'error');
+        }
+      } else {
+        showToast('Link not available for this node', 'info');
+      }
+    }
+
+    let currentInspectorNode = null;
+    let qrCodeInstance = null;
+
+    function openInspector(nodeId) {
+      const node = findNode(nodeId);
+      if (!node) return;
+      currentInspectorNode = node;
+
+      const raw = node.raw || {};
+      const proto = (node.type || 'vless').toLowerCase();
+
+      document.getElementById('inspTitle').textContent = node.tag || 'Proxy Node Details';
+      const badge = document.getElementById('inspProtoBadge');
+      badge.textContent = proto;
+      badge.className = `proto-badge proto-${proto}`;
+
+      document.getElementById('inspTag').textContent = node.tag || node.server;
+      document.getElementById('inspEndpoint').textContent = `${node.server}:${node.port}`;
+      document.getElementById('inspProfile').textContent = `Source: ${node.profile || 'Custom'}`;
+
+      const link = node.link || '';
+      document.getElementById('inspRawLink').value = link;
+
+      // Generate QR Code cleanly
+      const qrBox = document.getElementById('inspQrBox');
+      qrBox.innerHTML = '';
+      if (typeof QRCode !== 'undefined' && link) {
+        try {
+          const qrText = getSafeQrText(link);
+          qrCodeInstance = new QRCode(qrBox, {
+            text: qrText,
+            width: 260,
+            height: 260,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.L
+          });
+        } catch (e) {
+          qrBox.innerHTML = '<span style="font-size:11px; color:#fb7185; text-align:center;">QR render failed</span>';
+        }
+      } else {
+        qrBox.innerHTML = '<span style="font-size:11px; color:var(--text-dim); text-align:center;">No QR available</span>';
+      }
+
+      // Populate Recommended Client Apps
+      const appsInfo = getRecommendedApps(proto);
+      const appsListEl = document.getElementById('inspAppsList');
+      if (appsListEl) {
+        appsListEl.innerHTML = `
+          <div class="insp-platform-row">
+            <span class="insp-platform-label">Android</span>
+            <span class="insp-platform-apps">${escapeHtml(appsInfo.android)}</span>
+          </div>
+          <div class="insp-platform-row">
+            <span class="insp-platform-label">iOS</span>
+            <span class="insp-platform-apps">${escapeHtml(appsInfo.ios)}</span>
+          </div>
+          <div class="insp-platform-row">
+            <span class="insp-platform-label">Desktop</span>
+            <span class="insp-platform-apps">${escapeHtml(appsInfo.desktop)}</span>
+          </div>
+        `;
+      }
+
+      // Parameters Grid
+      const grid = document.getElementById('inspGrid');
+      const items = [];
+      items.push({ label: 'Protocol', val: proto.toUpperCase() });
+      items.push({ label: 'Server Host', val: node.server });
+      items.push({ label: 'Port', val: String(node.port) });
+
+      if (raw.uuid) items.push({ label: 'UUID', val: raw.uuid });
+      if (raw.password) items.push({ label: 'Password', val: raw.password });
+      if (raw.user) items.push({ label: 'Username', val: raw.user });
+      if (raw.flow) items.push({ label: 'Flow', val: raw.flow });
+
+      const tls = raw.tls || {};
+      if (tls.enabled || raw.security === 'tls' || raw.security === 'reality') {
+        const secLabel = (tls.reality && tls.reality.enabled) ? 'Reality' : 'TLS';
+        items.push({ label: 'Security', val: secLabel });
+        if (tls.server_name) items.push({ label: 'SNI', val: tls.server_name });
+        if (tls.reality && tls.reality.public_key) items.push({ label: 'Public Key', val: tls.reality.public_key });
+        if (tls.utls && tls.utls.fingerprint) items.push({ label: 'Fingerprint', val: tls.utls.fingerprint });
+      }
+
+      const tp = raw.transport || {};
+      if (tp.type) {
+        items.push({ label: 'Transport', val: tp.type.toUpperCase() });
+        if (tp.path) items.push({ label: 'Path', val: tp.path });
+        if (tp.headers && tp.headers.Host) items.push({ label: 'Host Header', val: tp.headers.Host });
+      }
+
+      grid.innerHTML = items.map(it => `
+        <div class="inspector-item">
+          <span class="inspector-label">${escapeHtml(it.label)}</span>
+          <span class="inspector-val">${escapeHtml(it.val)}</span>
+        </div>
+      `).join('');
+
+      // Traffic Usage for inspected node
+      const inspTrafficBox = document.getElementById('inspTrafficBox');
+      if (inspTrafficBox) {
+        const tKey = getTrafficNodeKey(node);
+        inspTrafficBox.className = 'insp-traffic-box';
+        inspTrafficBox.innerHTML = `
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              <span>Traffic Consumption</span>
+            </div>
+            <button class="btn-traffic-link" onclick="openTrafficModal('${escapeHtml(tKey)}')">
+              <span>View Full Analytics</span>
+            </button>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-card); border-radius: 8px; padding: 6px 10px;">
+              <div style="font-size: 10px; color: var(--text-muted);">Today</div>
+              <div style="font-size: 12px; font-weight: 700; color: var(--text-main);" id="inspTrafficToday">...</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-card); border-radius: 8px; padding: 6px 10px;">
+              <div style="font-size: 10px; color: var(--text-muted);">This Month</div>
+              <div style="font-size: 12px; font-weight: 700; color: var(--text-main);" id="inspTrafficMonth">...</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-card); border-radius: 8px; padding: 6px 10px;">
+              <div style="font-size: 10px; color: var(--text-muted);">All-Time</div>
+              <div style="font-size: 12px; font-weight: 700; color: var(--text-main);" id="inspTrafficAll">...</div>
+            </div>
+          </div>
+        `;
+        fetchNodeTrafficForInspector(tKey);
+      }
+
+      document.getElementById('inspectorModal').classList.add('open');
+    }
+
+    function closeInspectorModal() {
+      document.getElementById('inspectorModal').classList.remove('open');
+      currentInspectorNode = null;
+    }
+
+    async function copyInspLink() {
+      const link = document.getElementById('inspRawLink').value;
+      if (!link) {
+        showToast('No shareable link available', 'info');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(link);
+        showToast('Shareable link copied to clipboard!', 'success');
+      } catch (e) {
+        showToast('Failed to copy: ' + e, 'error');
+      }
+    }
+
+    function downloadQrCode() {
+      const qrBox = document.getElementById('inspQrBox');
+      if (!qrBox) return;
+      const canvas = qrBox.querySelector('canvas');
+      const img = qrBox.querySelector('img');
+      let dataUrl = null;
+      if (canvas) {
+        try { dataUrl = canvas.toDataURL('image/png'); } catch(_) {}
+      }
+      if (!dataUrl && img && img.src && img.src.startsWith('data:')) {
+        dataUrl = img.src;
+      }
+      if (!dataUrl) {
+        showToast('No QR image available to download', 'info');
+        return;
+      }
+      const tag = (currentInspectorNode && currentInspectorNode.tag) ? currentInspectorNode.tag.replace(/[^a-zA-Z0-9_-]/g, '_') : 'proxy';
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `xhm-${tag}-qr.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('QR Code saved as image', 'success');
+    }
+
+    // Modal overlay listeners
+    const inspOverlay = document.getElementById('inspectorModal');
+    let isInspDown = false;
+    inspOverlay.addEventListener('mousedown', (e) => {
+      isInspDown = (e.target === inspOverlay);
+    });
+    inspOverlay.addEventListener('mouseup', (e) => {
+      if (isInspDown && e.target === inspOverlay) {
+        closeInspectorModal();
+      }
+      isInspDown = false;
+    });
+
+    // Modal
+    function openAddModal(prefillLink = '', prefillName = '') {
+      const title = document.getElementById('modalTitle');
+      const titleIcon = document.getElementById('modalTitleIcon');
+      if (title) title.textContent = prefillLink ? 'Edit Configuration' : 'Add Configuration or Subscription';
+      if (titleIcon) {
+        titleIcon.innerHTML = prefillLink ?
+          '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>' :
+          '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>';
+      }
+      document.getElementById('txtModalLinks').value = prefillLink;
+      document.getElementById('txtModalName').value = prefillName;
+      document.getElementById('modalStatusMsg').textContent = '';
+      document.getElementById('addModal').classList.add('open');
+      setTimeout(() => document.getElementById('txtModalLinks').focus(), 100);
+    }
+
+    async function closeAddModal(force = false) {
+      const modal = document.getElementById('addModal');
+      const text = document.getElementById('txtModalLinks').value.trim();
+      if (!force && text.length > 0) {
+        const ok = await showConfirmModal({
+          title: 'Discard Unsaved Config',
+          message: 'You have unsaved text in the config box. Close anyway?',
+          confirmText: 'Discard'
+        });
+        if (!ok) return;
+      }
+      modal.classList.remove('open');
+      document.getElementById('txtModalLinks').value = '';
+      document.getElementById('txtModalName').value = '';
+    }
+
+    // Safe backdrop drag handling
+    const modalOverlay = document.getElementById('addModal');
+    let isOverlayDown = false;
+    modalOverlay.addEventListener('mousedown', (e) => {
+      isOverlayDown = (e.target === modalOverlay);
+    });
+    modalOverlay.addEventListener('mouseup', (e) => {
+      if (isOverlayDown && e.target === modalOverlay) {
+        closeAddModal(false);
+      }
+      isOverlayDown = false;
+    });
+
+    async function pasteModalClipboard() {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) document.getElementById('txtModalLinks').value += text + '\n';
+      } catch (e) {
+        showToast('Clipboard access unavailable — press Ctrl+V inside the box', 'info');
+      }
+    }
+
+    async function submitAddConfig() {
+      const text = document.getElementById('txtModalLinks').value.trim();
+      const name = document.getElementById('txtModalName').value.trim();
+      const status = document.getElementById('modalStatusMsg');
+      const btn = document.getElementById('btnSubmitAdd');
+
+      if (!text) {
+        status.style.color = 'var(--accent-rose)';
+        status.textContent = 'Please paste at least one config link or URL.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Importing...';
+      status.style.color = 'var(--accent-indigo)';
+      status.textContent = 'Parsing configuration links...';
+
+      try {
+        const res = await fetch('/api/add-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, name })
+        });
+        const data = await res.json();
+        if (data.count > 0) {
+          status.style.color = 'var(--accent-emerald)';
+          status.textContent = data.message;
+          showToast(data.message, 'success');
+          await fetchNodes();
+          setTimeout(() => closeAddModal(true), 800);
+        } else {
+          status.style.color = 'var(--accent-rose)';
+          status.textContent = data.message || 'No valid proxy nodes detected.';
+        }
+      } catch (e) {
+        status.style.color = 'var(--accent-rose)';
+        status.textContent = 'Network or parse error: ' + e;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Import Nodes';
+      }
+    }
+
+    function populateFilterDropdown() {
+      const sel = document.getElementById('filterSelect');
+      if (!sel) return;
+      const profiles = [...new Set(
+        allNodes
+          .map(n => n.profile)
+          .filter(p => p && p !== 'Custom')
+      )].sort((a, b) => a.localeCompare(b));
+
+      const prev = currentFilter;
+      let html = `
+        <option value="all">All Servers</option>
+        <option value="subs">Subscriptions</option>
+        <option value="custom">Custom</option>
+      `;
+      if (profiles.length > 0) {
+        html += `<optgroup label="Subscription Profiles">` +
+          profiles.map(p => `<option value="profile:${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('') +
+          `</optgroup>`;
+      }
+      sel.innerHTML = html;
+
+      if ([...sel.options].some(o => o.value === prev)) {
+        sel.value = prev;
+      } else {
+        currentFilter = 'all';
+        sel.value = 'all';
+      }
+      const btnClearCustom = document.getElementById('btnClearCustom');
+      if (btnClearCustom) {
+        btnClearCustom.style.display = (currentFilter === 'custom') ? 'inline-flex' : 'none';
+      }
+    }
+
+    function setFilter(filterVal) {
+      currentFilter = filterVal || 'all';
+      const sel = document.getElementById('filterSelect');
+      if (sel && sel.value !== currentFilter) sel.value = currentFilter;
+
+      const btnClearCustom = document.getElementById('btnClearCustom');
+      if (btnClearCustom) {
+        btnClearCustom.style.display = (currentFilter === 'custom') ? 'inline-flex' : 'none';
+      }
+      renderNodes();
+    }
+
+    function handleSearch(val) {
+      searchQuery = val.trim();
+      renderNodes();
+    }
+
+    function resetFilters() {
+      searchQuery = '';
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) searchInput.value = '';
+      setFilter('all');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, m => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[m]));
+    }
+
+    // Live Core Logs Viewer Logic
+    let isLogsOpen = false;
+    let logsTimer = null;
+    let cachedLogsText = '';
+
+    function toggleLogsDrawer() {
+      const drawer = document.getElementById('logsDrawer');
+      const btn = document.getElementById('btnToggleLogs');
+      isLogsOpen = !isLogsOpen;
+      if (isLogsOpen) {
+        drawer.classList.add('open');
+        if (btn) btn.classList.add('active');
+        fetchLogs();
+        logsTimer = setInterval(fetchLogs, 1500);
+      } else {
+        drawer.classList.remove('open');
+        if (btn) btn.classList.remove('active');
+        if (logsTimer) clearInterval(logsTimer);
+      }
+    }
+
+    async function fetchLogs() {
+      if (!isLogsOpen) return;
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        const lines = data.logs || [];
+        const terminal = document.getElementById('logsTerminal');
+        const badge = document.getElementById('logsCountBadge');
+        if (badge) badge.textContent = `${lines.length} lines`;
+
+        const newText = lines.join('\n');
+        if (newText === cachedLogsText) return;
+        cachedLogsText = newText;
+
+        if (lines.length === 0) {
+          terminal.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">No logs recorded yet.</div>';
+          return;
+        }
+
+        terminal.innerHTML = lines.map(line => {
+          let lineClass = 'log-line';
+          const lower = line.toLowerCase();
+          if (lower.includes('error') || lower.includes('fail') || lower.includes('fatal')) {
+            lineClass += ' log-error';
+          } else if (lower.includes('warn')) {
+            lineClass += ' log-warn';
+          } else if (lower.includes('connected') || lower.includes('listening') || lower.includes('started')) {
+            lineClass += ' log-success';
+          } else if (lower.includes('info') || lower.includes('tunnel')) {
+            lineClass += ' log-info';
+          }
+          return `<div class="${lineClass}">${escapeHtml(line)}</div>`;
+        }).join('');
+
+        const chk = document.getElementById('chkAutoScroll');
+        if (chk && chk.checked) {
+          terminal.scrollTop = terminal.scrollHeight;
+        }
+      } catch (e) {
+        console.error('Fetch logs error:', e);
+      }
+    }
+
+    async function copyAllLogs() {
+      if (!cachedLogsText) {
+        showToast('No logs to copy', 'info');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(cachedLogsText);
+        showToast('All logs copied to clipboard!', 'success');
+      } catch (e) {
+        showToast('Failed to copy logs: ' + e, 'error');
+      }
+    }
+
+    async function clearLogs() {
+      try {
+        const res = await fetch('/api/clear-logs', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          cachedLogsText = '';
+          const terminal = document.getElementById('logsTerminal');
+          if (terminal) terminal.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">Logs cleared.</div>';
+          const badge = document.getElementById('logsCountBadge');
+          if (badge) badge.textContent = '0 lines';
+          showToast('Log file cleared', 'info');
+        }
+      } catch (e) {
+        showToast('Failed to clear logs: ' + e, 'error');
+      }
+    }
+
+    // Real Connectivity & Web Latency Check
+    async function testRealConnectivity() {
+      const btn = document.getElementById('btnTestWeb');
+      const resLabel = document.getElementById('webTestResult');
+      if (!btn || !resLabel) return;
+
+      btn.disabled = true;
+      btn.innerHTML = '<svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> <span>Testing...</span>';
+      resLabel.textContent = 'Testing...';
+      resLabel.style.color = 'var(--text-muted)';
+
+      try {
+        const res = await fetch('/api/test-connectivity', { method: 'POST' });
+        const data = await res.json();
+        if (data.alive) {
+          resLabel.innerHTML = `<span style="color:#34d399;">●</span> ${data.latency_ms} ms (${escapeHtml(data.target)})`;
+          resLabel.style.color = '#34d399';
+          showToast(`Internet verified: ${data.latency_ms} ms (${data.target})`, 'success');
+        } else {
+          resLabel.innerHTML = `<span style="color:#fb7185;">●</span> No Internet`;
+          resLabel.style.color = '#fb7185';
+          showToast(data.error || 'Internet check failed through proxy', 'error');
+        }
+      } catch (e) {
+        resLabel.innerHTML = '<span style="color:#fb7185;">●</span> Error';
+        resLabel.style.color = '#fb7185';
+        showToast('Test error: ' + e, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> <span>Test Speed</span>';
+      }
+    }
+
+    // Subscriptions Management
+    async function openSubsModal() {
+      document.getElementById('subsModal').classList.add('open');
+      await fetchSubscriptions();
+    }
+
+    function closeSubsModal() {
+      document.getElementById('subsModal').classList.remove('open');
+    }
+
+    async function fetchSubscriptions() {
+      const container = document.getElementById('subsListContainer');
+      if (!container) return;
+      container.innerHTML = '<div style="color: var(--text-dim); padding: 14px; text-align: center;">Loading subscriptions...</div>';
+
+      try {
+        const res = await fetch('/api/subscriptions');
+        const subs = await res.json();
+        if (subs.length === 0) {
+          container.innerHTML = `
+            <div style="text-align: center; padding: 26px; color: var(--text-dim);">
+              <div style="display: flex; justify-content: center; margin-bottom: 8px; color: var(--text-dim);">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+              </div>
+              <div style="font-size: 13px; color: var(--text-muted); font-weight: 600;">No subscriptions added yet</div>
+              <div style="font-size: 11px; margin-top: 4px;">Click "+ Add Subscription" to import your subscription URL.</div>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = subs.map(s => `
+          <div class="sub-item">
+            <div class="sub-info">
+              <span class="sub-name">${escapeHtml(s.name || 'Subscription')}</span>
+              <span class="sub-url" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</span>
+              <div class="sub-meta">
+                <span style="display: inline-flex; align-items: center; gap: 4px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>
+                  ${s.count || 0} nodes
+                </span>
+                <span style="display: inline-flex; align-items: center; gap: 4px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  Updated: ${escapeHtml(s.updated_at || 'Never')}
+                </span>
+              </div>
+            </div>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button class="btn-icon-card" title="Copy subscription URL" onclick="copySubUrl('${escapeHtml(s.url)}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              </button>
+              <button class="btn-icon-card" title="Delete subscription" onclick="deleteSubscription('${escapeHtml(s.url)}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              </button>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        container.innerHTML = `<div style="color: var(--accent-rose); padding: 14px;">Failed to load: ${escapeHtml(e)}</div>`;
+      }
+    }
+
+    async function copySubUrl(url) {
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast('Subscription URL copied!', 'success');
+      } catch (e) {
+        showToast('Copy failed: ' + e, 'error');
+      }
+    }
+
+    async function deleteSubscription(url) {
+      const ok = await showConfirmModal({
+        title: 'Remove Subscription',
+        message: 'Remove this subscription URL from your saved list?',
+        confirmText: 'Remove'
+      });
+      if (!ok) return;
+      try {
+        const res = await fetch('/api/delete-subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Subscription removed', 'success');
+          await fetchSubscriptions();
+        }
+      } catch (e) {
+        showToast('Delete error: ' + e, 'error');
+      }
+    }
+
+    async function updateAllSubscriptions() {
+      const btn = document.getElementById('btnUpdateAllSubs');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> <span>Updating...</span>';
+      }
+      showToast('Updating all subscriptions...', 'info');
+
+      try {
+        const res = await fetch('/api/update-subscriptions', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || 'Subscriptions updated!', 'success');
+        await fetchSubscriptions();
+        await fetchNodes();
+      } catch (e) {
+        showToast('Update error: ' + e, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> <span>Update All</span>';
+        }
+      }
+    }
+
+    async function clearAllCustomNodes() {
+      const ok = await showConfirmModal({
+        title: 'Clear All Custom Configs',
+        message: 'Permanently remove all custom proxy nodes? Subscription nodes will remain untouched.',
+        confirmText: 'Clear All'
+      });
+      if (!ok) return;
+      try {
+        const res = await fetch('/api/clear-all-custom', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showToast('All custom nodes cleared', 'success');
+          await fetchNodes();
+        }
+      } catch (e) {
+        showToast('Clear error: ' + e, 'error');
+      }
+    }
+
+    // Modal overlay drag listener for Subs Modal (Rule 4 safe)
+    const subsOverlay = document.getElementById('subsModal');
+    let isSubsDown = false;
+    subsOverlay.addEventListener('mousedown', (e) => {
+      isSubsDown = (e.target === subsOverlay);
+    });
+    subsOverlay.addEventListener('mouseup', (e) => {
+      if (isSubsDown && e.target === subsOverlay) {
+        closeSubsModal();
+      }
+      isSubsDown = false;
+    });
+
+    // ==========================================
+    // Traffic & Usage Analytics Management
+    // ==========================================
+    let currentTrafficTab = 'hourly';
+    let currentTrafficNode = 'all';
+    let trafficDateFilter = '';
+    let nodeTrafficCache = {};
+
+    function getTrafficNodeKey(node) {
+      if (!node) return '';
+      const srv = node.server || '';
+      const prt = Number(node.port) || 0;
+      const typ = (node.type || 'vless').toLowerCase();
+      return `${srv}:${prt}:${typ}`;
+    }
+
+    async function fetchNodeTrafficSummary() {
+      try {
+        const res = await fetch('/api/traffic-stats?view=nodes');
+        const data = await res.json();
+        if (data.nodes) {
+          nodeTrafficCache = {};
+          data.nodes.forEach(n => {
+            nodeTrafficCache[n.node_key] = n;
+          });
+          // Update cards without full reload
+          const cards = document.querySelectorAll('.node-card');
+          cards.forEach(card => {
+            const srv = card.dataset.server || '';
+            const prt = Number(card.dataset.port) || 0;
+            const typ = (card.dataset.type || 'vless').toLowerCase();
+            const key = `${srv}:${prt}:${typ}`;
+            const usage = nodeTrafficCache[key];
+            const meta = card.querySelector('.node-meta');
+            if (meta) {
+              const existingPill = meta.querySelector('.node-traffic-pill');
+              if (usage && usage.total_bytes > 0) {
+                const pillHtml = `
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                  <span>${usage.down_fmt}</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  <span>${usage.up_fmt}</span>
+                `;
+                if (existingPill) {
+                  existingPill.innerHTML = pillHtml;
+                  existingPill.title = `Total Traffic: ${usage.total_fmt} (Down: ${usage.down_fmt}, Up: ${usage.up_fmt}) - Click for analytics`;
+                } else {
+                  const pill = document.createElement('span');
+                  pill.className = 'node-traffic-pill';
+                  pill.title = `Total Traffic: ${usage.total_fmt} (Down: ${usage.down_fmt}, Up: ${usage.up_fmt}) - Click for analytics`;
+                  pill.innerHTML = pillHtml;
+                  pill.onclick = (e) => {
+                    e.stopPropagation();
+                    openTrafficModal(key);
+                  };
+                  meta.appendChild(pill);
+                }
+              } else if (existingPill) {
+                existingPill.remove();
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Node traffic fetch failed:', e);
+      }
+    }
+
+    async function fetchNodeTrafficForInspector(nodeKey) {
+      try {
+        const res = await fetch(`/api/traffic-stats?view=summary&node_key=${encodeURIComponent(nodeKey)}`);
+        const data = await res.json();
+        const tToday = document.getElementById('inspTrafficToday');
+        const tMonth = document.getElementById('inspTrafficMonth');
+        const tAll = document.getElementById('inspTrafficAll');
+        if (tToday) tToday.textContent = data.today ? data.today.total_fmt : '0 B';
+        if (tMonth) tMonth.textContent = data.this_month ? data.this_month.total_fmt : '0 B';
+        if (tAll) tAll.textContent = data.all_time ? data.all_time.total_fmt : '0 B';
+      } catch (e) {
+        console.warn('Inspector traffic fetch failed:', e);
+      }
+    }
+
+    let hideEmptyTrafficRows = false;
+
+    function openTrafficModal(nodeKey = 'all') {
+      currentTrafficNode = nodeKey || 'all';
+      populateTrafficNodeSelect();
+      ['Hourly', 'Daily', 'Monthly', 'Yearly', 'Nodes', 'Sessions'].forEach(t => {
+        const el = document.getElementById(`tabTraffic${t}`);
+        if (el) el.classList.remove('active');
+      });
+      const activeBtn = document.getElementById(`tabTraffic${currentTrafficTab.charAt(0).toUpperCase() + currentTrafficTab.slice(1)}`);
+      if (activeBtn) activeBtn.classList.add('active');
+      const modal = document.getElementById('trafficModal');
+      if (modal) modal.classList.add('open');
+      refreshTrafficModal();
+    }
+
+    function closeTrafficModal() {
+      const modal = document.getElementById('trafficModal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function populateTrafficNodeSelect() {
+      const sel = document.getElementById('trafficNodeSelect');
+      if (!sel) return;
+      sel.innerHTML = '<option value="all">Global (All Configurations)</option>';
+      allNodes.forEach(n => {
+        const key = getTrafficNodeKey(n);
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = `${n.tag || n.server} (${(n.type || 'vless').toUpperCase()}) - ${n.server}:${n.port}`;
+        sel.appendChild(opt);
+      });
+      if (currentTrafficNode !== 'all' && !Array.from(sel.options).some(o => o.value === currentTrafficNode)) {
+        const opt = document.createElement('option');
+        opt.value = currentTrafficNode;
+        opt.textContent = currentTrafficNode;
+        sel.appendChild(opt);
+      }
+      sel.value = currentTrafficNode;
+    }
+
+    function onTrafficNodeChange(val) {
+      currentTrafficNode = val;
+      refreshTrafficModal();
+    }
+
+    function switchTrafficTab(tabName) {
+      currentTrafficTab = tabName;
+      ['Hourly', 'Daily', 'Monthly', 'Yearly', 'Nodes', 'Sessions'].forEach(t => {
+        const el = document.getElementById(`tabTraffic${t}`);
+        if (el) el.classList.remove('active');
+      });
+      const activeBtn = document.getElementById(`tabTraffic${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      renderPeriodControls();
+      loadTrafficView();
+    }
+
+    function renderPeriodControls() {
+      const container = document.getElementById('trafficPeriodControls');
+      if (!container) return;
+      container.innerHTML = '';
+
+      const today = new Date();
+      const curYear = today.getFullYear();
+      const curMonth = String(today.getMonth() + 1).padStart(2, '0');
+      const curDay = String(today.getDate()).padStart(2, '0');
+
+      if (currentTrafficTab === 'hourly') {
+        const defDate = trafficDateFilter && trafficDateFilter.length === 10 ? trafficDateFilter : `${curYear}-${curMonth}-${curDay}`;
+        container.innerHTML = `
+          <label style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Date:</label>
+          <input type="date" class="traffic-input-date" id="trafficDateInput" value="${defDate}" onchange="trafficDateFilter = this.value; loadTrafficView();">
+          <label class="traffic-hide-empty-label" title="Hide hours with 0 B traffic">
+            <input type="checkbox" ${hideEmptyTrafficRows ? 'checked' : ''} onchange="hideEmptyTrafficRows = this.checked; loadTrafficView();">
+            <span>Hide empty</span>
+          </label>
+        `;
+      } else if (currentTrafficTab === 'daily') {
+        const defMonth = trafficDateFilter && trafficDateFilter.length >= 7 ? trafficDateFilter.substring(0, 7) : `${curYear}-${curMonth}`;
+        container.innerHTML = `
+          <label style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Month:</label>
+          <input type="month" class="traffic-input-date" id="trafficMonthInput" value="${defMonth}" onchange="trafficDateFilter = this.value; loadTrafficView();">
+          <label class="traffic-hide-empty-label" title="Hide days with 0 B traffic">
+            <input type="checkbox" ${hideEmptyTrafficRows ? 'checked' : ''} onchange="hideEmptyTrafficRows = this.checked; loadTrafficView();">
+            <span>Hide empty</span>
+          </label>
+        `;
+      } else if (currentTrafficTab === 'monthly') {
+        const defYear = trafficDateFilter ? parseInt(trafficDateFilter.substring(0, 4)) : curYear;
+        let yearOpts = '';
+        for (let y = curYear; y >= curYear - 4; y--) {
+          yearOpts += `<option value="${y}" ${y === defYear ? 'selected' : ''}>${y}</option>`;
+        }
+        container.innerHTML = `
+          <label style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Year:</label>
+          <select class="traffic-select" id="trafficYearSelect" style="max-width: 100px;" onchange="trafficDateFilter = this.value; loadTrafficView();">
+            ${yearOpts}
+          </select>
+        `;
+      }
+    }
+
+    async function refreshTrafficModal() {
+      await loadTrafficSummary();
+      renderPeriodControls();
+      await loadTrafficView();
+    }
+
+    async function loadTrafficSummary() {
+      try {
+        const param = currentTrafficNode !== 'all' ? `&node_key=${encodeURIComponent(currentTrafficNode)}` : '';
+        const res = await fetch(`/api/traffic-stats?view=summary${param}`);
+        const data = await res.json();
+
+        // Update Session Card (Live if active, or latest historical session)
+        const sess = data.latest_session || data.session || {};
+        const isActiveSession = appStatus.connected && appStatus.active_node && (currentTrafficNode === 'all' || getTrafficNodeKey(appStatus.active_node) === currentTrafficNode);
+        const liveTraffic = (isActiveSession && appStatus.traffic) ? appStatus.traffic : null;
+
+        const sessTotal = liveTraffic ? liveTraffic.total_fmt : (sess.total_fmt || '0 B');
+        const sessDown = liveTraffic ? liveTraffic.down_total_fmt : (sess.down_fmt || '0 B');
+        const sessUp = liveTraffic ? liveTraffic.up_total_fmt : (sess.up_fmt || '0 B');
+
+        document.getElementById('kpiSessionTotal').textContent = sessTotal;
+        document.getElementById('kpiSessionDown').textContent = sessDown;
+        document.getElementById('kpiSessionUp').textContent = sessUp;
+
+        const durEl = document.getElementById('kpiSessionDuration');
+        if (isActiveSession) {
+          durEl.textContent = 'Active now';
+          durEl.style.color = 'var(--accent-emerald)';
+        } else if (sess.duration) {
+          const mins = Math.floor(sess.duration / 60);
+          const secs = Math.floor(sess.duration % 60);
+          durEl.textContent = `${mins}m ${secs}s`;
+          durEl.style.color = 'var(--text-muted)';
+        } else {
+          durEl.textContent = 'Inactive';
+          durEl.style.color = 'var(--text-dim)';
+        }
+
+        // Today Card
+        const today = data.today || {};
+        document.getElementById('kpiTodayTotal').textContent = today.total_fmt || '0 B';
+        document.getElementById('kpiTodayDown').textContent = today.down_fmt || '0 B';
+        document.getElementById('kpiTodayUp').textContent = today.up_fmt || '0 B';
+
+        // Month Card
+        const month = data.this_month || {};
+        document.getElementById('kpiMonthTotal').textContent = month.total_fmt || '0 B';
+        document.getElementById('kpiMonthDown').textContent = month.down_fmt || '0 B';
+        document.getElementById('kpiMonthUp').textContent = month.up_fmt || '0 B';
+
+        // All Time Card
+        const allTime = data.all_time || {};
+        document.getElementById('kpiAllTotal').textContent = allTime.total_fmt || '0 B';
+        document.getElementById('kpiAllDown').textContent = allTime.down_fmt || '0 B';
+        document.getElementById('kpiAllUp').textContent = allTime.up_fmt || '0 B';
+
+      } catch (e) {
+        console.error('Failed to load traffic summary:', e);
+      }
+    }
+
+    async function loadTrafficView() {
+      const container = document.getElementById('trafficContentArea');
+      if (!container) return;
+      container.innerHTML = '<div style="padding: 30px; text-align: center; color: var(--text-muted);">Loading analytics data...</div>';
+
+      try {
+        let url = `/api/traffic-stats?view=${currentTrafficTab}`;
+        if (currentTrafficNode !== 'all') {
+          url += `&node_key=${encodeURIComponent(currentTrafficNode)}`;
+        }
+
+        if (currentTrafficTab === 'hourly') {
+          const dateInput = document.getElementById('trafficDateInput');
+          const dVal = (dateInput && dateInput.value) || trafficDateFilter;
+          if (dVal) url += `&date=${encodeURIComponent(dVal)}`;
+        } else if (currentTrafficTab === 'daily') {
+          const monthInput = document.getElementById('trafficMonthInput');
+          const mVal = (monthInput && monthInput.value) || trafficDateFilter;
+          if (mVal) url += `&month=${encodeURIComponent(mVal)}`;
+        } else if (currentTrafficTab === 'monthly') {
+          const yearInput = document.getElementById('trafficYearSelect');
+          const yVal = (yearInput && yearInput.value) || trafficDateFilter;
+          if (yVal) url += `&year=${encodeURIComponent(yVal)}`;
+        }
+
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (currentTrafficTab === 'hourly') renderHourlyView(data);
+        else if (currentTrafficTab === 'daily') renderDailyView(data);
+        else if (currentTrafficTab === 'monthly') renderMonthlyView(data);
+        else if (currentTrafficTab === 'yearly') renderYearlyView(data);
+        else if (currentTrafficTab === 'nodes') renderNodesView(data);
+        else if (currentTrafficTab === 'sessions') renderSessionsView(data);
+
+      } catch (e) {
+        console.error('Failed to load traffic view:', e);
+        container.innerHTML = `<div style="padding: 30px; text-align: center; color: var(--accent-rose);">Error loading traffic data: ${escapeHtml(String(e))}</div>`;
+      }
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(i === 0 ? 0 : 2) + ' ' + sizes[i];
+    }
+
+    function renderHourlyView(data) {
+      const container = document.getElementById('trafficContentArea');
+      const hours = Array.isArray(data) ? data : (data.hours || []);
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const selectedDateEl = document.getElementById('trafficDateInput');
+      const isTodaySelected = !selectedDateEl || selectedDateEl.value === todayIso;
+      const curHourStr = String(now.getHours()).padStart(2, '0');
+
+      let totalDownBytes = 0, totalUpBytes = 0, totalBytes = 0;
+      let maxHourBytes = 1;
+      hours.forEach(h => {
+        totalDownBytes += (h.down_bytes || 0);
+        totalUpBytes += (h.up_bytes || 0);
+        totalBytes += (h.total_bytes || 0);
+        if (h.total_bytes > maxHourBytes) maxHourBytes = h.total_bytes;
+      });
+
+      const visibleHours = hideEmptyTrafficRows ? hours.filter(h => (h.total_bytes || 0) > 0) : hours;
+
+      let rows = visibleHours.length === 0
+        ? `<tr><td colspan="5" style="text-align: center; padding: 24px; color: var(--text-dim);">No recorded traffic for this date.</td></tr>`
+        : visibleHours.map(h => {
+          const pctDown = maxHourBytes > 0 ? ((h.down_bytes / maxHourBytes) * 100).toFixed(1) : 0;
+          const pctUp = maxHourBytes > 0 ? ((h.up_bytes / maxHourBytes) * 100).toFixed(1) : 0;
+          const rowTotal = h.total_bytes || 0;
+          const shareDown = rowTotal > 0 ? ((h.down_bytes / rowTotal) * 100).toFixed(0) : 0;
+          const shareUp = rowTotal > 0 ? ((h.up_bytes / rowTotal) * 100).toFixed(0) : 0;
+          const isNonZero = rowTotal > 0;
+          const hourLabel = h.label || `${String(h.hour).padStart(2, '0')}:00`;
+          const isCurrentHour = isTodaySelected && (hourLabel.startsWith(curHourStr + ':') || String(h.hour).padStart(2, '0') === curHourStr);
+          return `
+            <tr class="${isCurrentHour ? 'traffic-row-current' : ''}" style="${isNonZero || isCurrentHour ? '' : 'opacity: 0.45;'}">
+              <td style="font-weight: 600; color: var(--text-main);">${escapeHtml(hourLabel)}${isCurrentHour ? ' <span style="font-size: 10px; color: #60a5fa;">(now)</span>' : ''}</td>
+              <td class="traffic-down-val">${h.down_fmt || '0 B'}</td>
+              <td class="traffic-up-val">${h.up_fmt || '0 B'}</td>
+              <td class="traffic-total-val">${h.total_fmt || '0 B'}</td>
+              <td style="width: 32%;">
+                <div class="traffic-bar-track" title="${shareDown}% Down / ${shareUp}% Up">
+                  <div class="traffic-bar-down" style="width: ${pctDown}%;"></div>
+                  <div class="traffic-bar-up" style="width: ${pctUp}%;"></div>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      container.innerHTML = `
+        <table class="traffic-table">
+          <thead>
+            <tr>
+              <th>Time / Hour</th>
+              <th>Download</th>
+              <th>Upload</th>
+              <th>Total</th>
+              <th>Distribution (Down / Up)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+          <tfoot>
+            <tr style="background: rgba(255,255,255,0.03); font-weight: 700;">
+              <td>Day Total</td>
+              <td class="traffic-down-val">${formatBytes(totalDownBytes)}</td>
+              <td class="traffic-up-val">${formatBytes(totalUpBytes)}</td>
+              <td class="traffic-total-val">${formatBytes(totalBytes)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      `;
+    }
+
+    function renderDailyView(data) {
+      const container = document.getElementById('trafficContentArea');
+      const days = Array.isArray(data) ? data : (data.days || []);
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      let totalDownBytes = 0, totalUpBytes = 0, totalBytes = 0;
+      let maxDayBytes = 1;
+      days.forEach(d => {
+        totalDownBytes += (d.down_bytes || 0);
+        totalUpBytes += (d.up_bytes || 0);
+        totalBytes += (d.total_bytes || 0);
+        if (d.total_bytes > maxDayBytes) maxDayBytes = d.total_bytes;
+      });
+
+      const visibleDays = hideEmptyTrafficRows ? days.filter(d => (d.total_bytes || 0) > 0) : days;
+
+      let rows = visibleDays.length === 0
+        ? `<tr><td colspan="5" style="text-align: center; padding: 24px; color: var(--text-dim);">No recorded traffic for this month.</td></tr>`
+        : visibleDays.map(d => {
+          const pctDown = maxDayBytes > 0 ? ((d.down_bytes / maxDayBytes) * 100).toFixed(1) : 0;
+          const pctUp = maxDayBytes > 0 ? ((d.up_bytes / maxDayBytes) * 100).toFixed(1) : 0;
+          const rowTotal = d.total_bytes || 0;
+          const shareDown = rowTotal > 0 ? ((d.down_bytes / rowTotal) * 100).toFixed(0) : 0;
+          const shareUp = rowTotal > 0 ? ((d.up_bytes / rowTotal) * 100).toFixed(0) : 0;
+          const isNonZero = rowTotal > 0;
+          const dayLabel = d.label || d.day || 'Day';
+          const isToday = dayLabel === todayIso || d.day === todayIso;
+          return `
+            <tr class="${isToday ? 'traffic-row-current' : ''}" style="${isNonZero || isToday ? '' : 'opacity: 0.45;'}">
+              <td style="font-weight: 600; color: var(--text-main);">${escapeHtml(dayLabel)}${isToday ? ' <span style="font-size: 10px; color: #60a5fa;">(today)</span>' : ''}</td>
+              <td class="traffic-down-val">${d.down_fmt || '0 B'}</td>
+              <td class="traffic-up-val">${d.up_fmt || '0 B'}</td>
+              <td class="traffic-total-val">${d.total_fmt || '0 B'}</td>
+              <td style="width: 32%;">
+                <div class="traffic-bar-track" title="${shareDown}% Down / ${shareUp}% Up">
+                  <div class="traffic-bar-down" style="width: ${pctDown}%;"></div>
+                  <div class="traffic-bar-up" style="width: ${pctUp}%;"></div>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      container.innerHTML = `
+        <table class="traffic-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Download</th>
+              <th>Upload</th>
+              <th>Total</th>
+              <th>Usage Bar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+          <tfoot>
+            <tr style="background: rgba(255,255,255,0.03); font-weight: 700;">
+              <td>Month Total</td>
+              <td class="traffic-down-val">${formatBytes(totalDownBytes)}</td>
+              <td class="traffic-up-val">${formatBytes(totalUpBytes)}</td>
+              <td class="traffic-total-val">${formatBytes(totalBytes)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      `;
+    }
+
+    function renderMonthlyView(data) {
+      const container = document.getElementById('trafficContentArea');
+      const months = Array.isArray(data) ? data : (data.months || []);
+
+      let totalDownBytes = 0, totalUpBytes = 0, totalBytes = 0;
+      let maxMonthBytes = 1;
+      months.forEach(m => {
+        totalDownBytes += (m.down_bytes || 0);
+        totalUpBytes += (m.up_bytes || 0);
+        totalBytes += (m.total_bytes || 0);
+        if (m.total_bytes > maxMonthBytes) maxMonthBytes = m.total_bytes;
+      });
+
+      let rows = months.map(m => {
+        const pctDown = maxMonthBytes > 0 ? ((m.down_bytes / maxMonthBytes) * 100).toFixed(1) : 0;
+        const pctUp = maxMonthBytes > 0 ? ((m.up_bytes / maxMonthBytes) * 100).toFixed(1) : 0;
+        const isNonZero = m.total_bytes > 0;
+        const monthLabel = m.label || m.month || 'Month';
+        return `
+          <tr style="${isNonZero ? '' : 'opacity: 0.45;'}">
+            <td style="font-weight: 600; color: var(--text-main);">${escapeHtml(monthLabel)}</td>
+            <td class="traffic-down-val">${m.down_fmt || '0 B'}</td>
+            <td class="traffic-up-val">${m.up_fmt || '0 B'}</td>
+            <td class="traffic-total-val">${m.total_fmt || '0 B'}</td>
+            <td style="width: 32%;">
+              <div class="traffic-bar-track">
+                <div class="traffic-bar-down" style="width: ${pctDown}%;"></div>
+                <div class="traffic-bar-up" style="width: ${pctUp}%;"></div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      container.innerHTML = `
+        <table class="traffic-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Download</th>
+              <th>Upload</th>
+              <th>Total</th>
+              <th>Usage Bar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+          <tfoot>
+            <tr style="background: rgba(255,255,255,0.03); font-weight: 700;">
+              <td>Year Total</td>
+              <td class="traffic-down-val">${formatBytes(totalDownBytes)}</td>
+              <td class="traffic-up-val">${formatBytes(totalUpBytes)}</td>
+              <td class="traffic-total-val">${formatBytes(totalBytes)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      `;
+    }
+
+    function renderYearlyView(data) {
+      const container = document.getElementById('trafficContentArea');
+      const years = Array.isArray(data) ? data : (data.years || []);
+
+      if (years.length === 0) {
+        container.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">No yearly traffic recorded yet.</div>';
+        return;
+      }
+
+      let maxYearBytes = 1;
+      years.forEach(y => {
+        if (y.total_bytes > maxYearBytes) maxYearBytes = y.total_bytes;
+      });
+
+      let rows = years.map(y => {
+        const pctDown = maxYearBytes > 0 ? ((y.down_bytes / maxYearBytes) * 100).toFixed(1) : 0;
+        const pctUp = maxYearBytes > 0 ? ((y.up_bytes / maxYearBytes) * 100).toFixed(1) : 0;
+        return `
+          <tr>
+            <td style="font-weight: 700; color: var(--text-main); font-size: 13px;">${y.year}</td>
+            <td class="traffic-down-val">${y.down_fmt || '0 B'}</td>
+            <td class="traffic-up-val">${y.up_fmt || '0 B'}</td>
+            <td class="traffic-total-val">${y.total_fmt || '0 B'}</td>
+            <td style="width: 35%;">
+              <div class="traffic-bar-track">
+                <div class="traffic-bar-down" style="width: ${pctDown}%;"></div>
+                <div class="traffic-bar-up" style="width: ${pctUp}%;"></div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      container.innerHTML = `
+        <table class="traffic-table">
+          <thead>
+            <tr>
+              <th>Year</th>
+              <th>Download</th>
+              <th>Upload</th>
+              <th>Total</th>
+              <th>Usage Bar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderNodesView(data) {
+      const container = document.getElementById('trafficContentArea');
+      const nodes = Array.isArray(data) ? data : (data.nodes || []);
+
+      if (nodes.length === 0) {
+        container.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">No per-config traffic recorded yet. Connect to a server to start tracking!</div>';
+        return;
+      }
+
+      let maxNodeBytes = 1;
+      nodes.forEach(n => {
+        if (n.total_bytes > maxNodeBytes) maxNodeBytes = n.total_bytes;
+      });
+
+      let rows = nodes.map(n => {
+        const pctDown = maxNodeBytes > 0 ? ((n.down_bytes / maxNodeBytes) * 100).toFixed(1) : 0;
+        const pctUp = maxNodeBytes > 0 ? ((n.up_bytes / maxNodeBytes) * 100).toFixed(1) : 0;
+        return `
+          <tr>
+            <td>
+              <div style="font-weight: 600; color: var(--text-main);">${escapeHtml(n.node_tag || n.node_key)}</div>
+              <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">${escapeHtml(n.node_key)}</div>
+            </td>
+            <td class="traffic-down-val">${n.down_fmt || '0 B'}</td>
+            <td class="traffic-up-val">${n.up_fmt || '0 B'}</td>
+            <td class="traffic-total-val">${n.total_fmt || '0 B'}</td>
+            <td style="width: 28%;">
+              <div class="traffic-bar-track">
+                <div class="traffic-bar-down" style="width: ${pctDown}%;"></div>
+                <div class="traffic-bar-up" style="width: ${pctUp}%;"></div>
+              </div>
+            </td>
+            <td>
+              <button class="btn-action" style="padding: 4px 8px; font-size: 10px;" onclick="openTrafficModal('${escapeHtml(n.node_key)}')">
+                Filter Node
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      container.innerHTML = `
+        <table class="traffic-table">
+          <thead>
+            <tr>
+              <th>Configuration / Node</th>
+              <th>Download</th>
+              <th>Upload</th>
+              <th>Total</th>
+              <th>Proportion</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderSessionsView(data) {
+      const container = document.getElementById('trafficContentArea');
+      const sessions = Array.isArray(data) ? data : (data.sessions || []);
+
+      if (sessions.length === 0) {
+        container.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">No connection sessions recorded yet.</div>';
+        return;
+      }
+
+      let rows = sessions.map(s => {
+        const durSec = s.duration || 0;
+        const mins = Math.floor(durSec / 60);
+        const secs = Math.floor(durSec % 60);
+        const durFmt = s.duration_fmt || (durSec > 0 ? `${mins}m ${secs}s` : 'Active / Instant');
+        const stFmt = s.start_time_fmt || s.start_time || '';
+        const srv = s.server || s.node_server || '';
+        const prt = s.port || s.node_port || '';
+        const nType = (s.type || s.node_type || '').toLowerCase();
+        const protoBadge = nType ? `<span class="proto-badge proto-${nType}" style="font-size: 9px; padding: 1px 5px;">${nType}</span>` : '';
+        return `
+          <tr>
+            <td style="font-family: monospace; font-size: 10px; color: var(--text-muted);">${escapeHtml(stFmt)}</td>
+            <td>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                ${protoBadge}
+                <span style="font-weight: 600; color: var(--text-main);">${escapeHtml(s.node_tag || srv || 'Node')}</span>
+              </div>
+              <div style="font-size: 10px; color: var(--text-dim); font-family: monospace;">${escapeHtml(srv)}:${prt}</div>
+            </td>
+            <td>${escapeHtml(durFmt)}</td>
+            <td class="traffic-down-val">${s.down_fmt || '0 B'}</td>
+            <td class="traffic-up-val">${s.up_fmt || '0 B'}</td>
+            <td class="traffic-total-val">${s.total_fmt || '0 B'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      container.innerHTML = `
+        <table class="traffic-table">
+          <thead>
+            <tr>
+              <th>Connected At</th>
+              <th>Server Node</th>
+              <th>Duration</th>
+              <th>Download</th>
+              <th>Upload</th>
+              <th>Total Traffic</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      `;
+    }
+
+    // Dark Confirmation Modal Helper (Rule 4 backdrop safe)
+    let confirmModalResolve = null;
+
+    function showConfirmModal({ title = 'Confirm Action', message = '', confirmText = 'Confirm' }) {
+      return new Promise(resolve => {
+        if (confirmModalResolve) {
+          confirmModalResolve(false);
+          confirmModalResolve = null;
+        }
+        const modal = document.getElementById('confirmModal');
+        document.getElementById('confirmModalTitle').textContent = title;
+        document.getElementById('confirmModalMessage').textContent = message;
+        const okBtn = document.getElementById('confirmModalOk');
+        okBtn.textContent = confirmText;
+
+        confirmModalResolve = (result) => {
+          modal.classList.remove('open');
+          confirmModalResolve = null;
+          resolve(result);
+        };
+        modal.classList.add('open');
+        setTimeout(() => okBtn.focus(), 40);
+      });
+    }
+
+    (function setupConfirmModal() {
+      const overlay = document.getElementById('confirmModal');
+      const okBtn = document.getElementById('confirmModalOk');
+      const cancelBtn = document.getElementById('confirmModalCancel');
+      const closeBtn = document.getElementById('confirmModalClose');
+      let isConfirmDown = false;
+
+      if (okBtn) okBtn.onclick = () => confirmModalResolve && confirmModalResolve(true);
+      if (cancelBtn) cancelBtn.onclick = () => confirmModalResolve && confirmModalResolve(false);
+      if (closeBtn) closeBtn.onclick = () => confirmModalResolve && confirmModalResolve(false);
+      if (overlay) {
+        overlay.addEventListener('mousedown', (e) => {
+          isConfirmDown = (e.target === overlay);
+        });
+        overlay.addEventListener('mouseup', (e) => {
+          if (isConfirmDown && e.target === overlay && confirmModalResolve) {
+            confirmModalResolve(false);
+          }
+          isConfirmDown = false;
+        });
+      }
+    })();
+
+    async function confirmResetTraffic() {
+      const targetLabel = currentTrafficNode === 'all' ? 'ALL configurations globally' : `configuration "${currentTrafficNode}"`;
+      const ok = await showConfirmModal({
+        title: 'Reset Traffic Statistics',
+        message: `Permanently reset internet traffic statistics for ${targetLabel}? This cannot be undone.`,
+        confirmText: 'Reset Stats'
+      });
+      if (!ok) return;
+      try {
+        const res = await fetch('/api/traffic-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ node_key: currentTrafficNode === 'all' ? null : currentTrafficNode })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Traffic statistics reset successfully', 'success');
+          await fetchNodeTrafficSummary();
+          await refreshTrafficModal();
+        } else {
+          showToast('Failed to reset traffic statistics', 'error');
+        }
+      } catch (e) {
+        showToast('Error resetting traffic: ' + e, 'error');
+      }
+    }
+
+    // Modal overlay drag listener for Traffic Modal (Rule 4 safe)
+    const trafficOverlay = document.getElementById('trafficModal');
+    let isTrafficDown = false;
+    trafficOverlay.addEventListener('mousedown', (e) => {
+      isTrafficDown = (e.target === trafficOverlay);
+    });
+    trafficOverlay.addEventListener('mouseup', (e) => {
+      if (isTrafficDown && e.target === trafficOverlay) {
+        closeTrafficModal();
+      }
+      isTrafficDown = false;
+    });
+
+    // Keyboard Shortcuts & Server List Navigation
+    window.addEventListener('keydown', (e) => {
+      const confirmModalEl = document.getElementById('confirmModal');
+      if (e.key === 'Escape') {
+        if (confirmModalEl && confirmModalEl.classList.contains('open') && confirmModalResolve) {
+          confirmModalResolve(false);
+          return;
+        }
+        closeAddModal();
+        closeInspectorModal();
+        closeSubsModal();
+        closeTrafficModal();
+        return;
+      }
+
+      const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+      const isTyping = activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select';
+      const isInteractive = isTyping || activeTag === 'button' || activeTag === 'a';
+      const anyModalOpen = document.querySelector('.modal-overlay.open') !== null;
+
+      if ((e.ctrlKey && e.key.toLowerCase() === 'k') || (e.key === '/' && !isTyping && !anyModalOpen)) {
+        e.preventDefault();
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+
+      if (!isInteractive && !anyModalOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+        const cards = Array.from(document.querySelectorAll('.node-card'));
+        if (cards.length === 0) return;
+
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          let idx = cards.findIndex(c => c.dataset.id === selectedNodeKey);
+          if (idx === -1) {
+            idx = e.key === 'ArrowDown' ? 0 : cards.length - 1;
+          } else {
+            idx = e.key === 'ArrowDown'
+              ? Math.min(cards.length - 1, idx + 1)
+              : Math.max(0, idx - 1);
+          }
+          const target = cards[idx];
+          if (target) {
+            selectNode(target, target.dataset.id);
+            target.focus({ preventScroll: true });
+            target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          }
+        } else if (e.key === 'Enter' && selectedNodeKey) {
+          e.preventDefault();
+          connectNode(selectedNodeKey);
+        }
+      }
+    });
+
+    // Init
+    fetchStatus();
+    fetchNodes();
+    setInterval(fetchStatus, 1500);
+  </script>
+</body>
+</html>

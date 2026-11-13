@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Runtime & State
+runtime/
+state.json
+run.json
+xray.json
+core.log
+proxy_env.sh
+saved_system_proxy.json
+
+# User Private Data & Passwords
+custom_configs.json
+subscriptions.json
+chrome-profile/
+
+# OS / Editor
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

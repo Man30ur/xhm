@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# XHM GUI Launcher - Launches modern standalone desktop app
+set -e
+
+PORT=18501
+URL="http://127.0.0.1:${PORT}"
+WEB_DIR="$HOME/.local/share/xhm/web"
+PROFILE_DIR="$HOME/.local/share/xhm/chrome-profile"
+
+mkdir -p "$PROFILE_DIR"
+
+# 1. Start local API server daemon if not already listening
+if ! (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
+    nohup python3 "$WEB_DIR/server.py" >/dev/null 2>&1 &
+    # Wait for server to bind
+    for i in {1..30}; do
+        if (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.1
+    done
+fi
+
+# Set desktop entry and Wayland app-id hints
+export CHROME_DESKTOP="xhm-gui.desktop"
+export WAYLAND_APP_ID="xhm-gui"
+
+# 2. Launch standalone modern borderless app window
+if command -v google-chrome >/dev/null 2>&1; then
+    exec google-chrome \
+        --app="$URL" \
+        --user-data-dir="$PROFILE_DIR" \
+        --window-size=1040,740 \
+        --class=xhm-gui \
+        --name=xhm-gui \
+        --no-first-run \
+        --no-default-browser-check \
+        "$@"
+elif command -v chromium >/dev/null 2>&1; then
+    exec chromium \
+        --app="$URL" \
+        --user-data-dir="$PROFILE_DIR" \
+        --window-size=1040,740 \
+        --class=xhm-gui \
+        --name=xhm-gui \
+        "$@"
+else
+    exec xdg-open "$URL"
+fi

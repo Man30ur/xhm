@@ -1,0 +1,19 @@
+/* XHM: allow local interactive users in sudo/wheel to configure
+ * systemd-resolved for xhm-tun without password prompts on every toggle.
+ */
+polkit.addRule(function (action, subject) {
+    if (!subject.active || !subject.local) {
+        return;
+    }
+    if (!(subject.isInGroup("sudo") || subject.isInGroup("wheel") || subject.isInGroup("adm"))) {
+        return;
+    }
+    if (
+        action.id === "org.freedesktop.resolve1.set-dns-servers" ||
+        action.id === "org.freedesktop.resolve1.set-domains" ||
+        action.id === "org.freedesktop.resolve1.set-default-route" ||
+        action.id === "org.freedesktop.resolve1.revert"
+    ) {
+        return polkit.Result.YES;
+    }
+});

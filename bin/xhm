@@ -1,0 +1,720 @@
+#!/usr/bin/env python3
+"""
+Xray Terminal Proxy Manager (XHM)
+Interactive terminal interface and CLI to switch, toggle, and monitor proxy configs.
+"""
+
+import argparse
+import curses
+import json
+import os
+import re
+import shutil
+import signal
+import socket
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import unicodedata
+
+# --- Constants & Paths ---
+RUNTIME_DIR = "/tmp/xhm"
+STATE_FILE = os.path.join(RUNTIME_DIR, "state.json")
+RUN_CONFIG_FILE = os.path.join(RUNTIME_DIR, "run.json")
+XRAY_CONFIG_FILE = os.path.join(RUNTIME_DIR, "xray.json")
+LOG_FILE = os.path.join(RUNTIME_DIR, "core.log")
+
+XRAY_BIN = (
+    shutil.which("xray")
+    or next((p for p in (os.path.expanduser("~/.local/bin/xray"), "/usr/local/bin/xray", "/usr/bin/xray", os.path.expanduser("~/xray/xray")) if os.path.exists(p)), "/usr/local/bin/xray")
+)
+
+DEFAULT_PROXY_PORT = 10850
+
+
+def safe_clip(text: str, max_cols: int) -> str:
+    """Safely clip string considering wide characters and emojis."""
+    cols = 0
+    res = []
+    for ch in text:
+        w = 2 if unicodedata.east_asian_width(ch) in ("F", "W") or ord(ch) > 0x1F000 else 1
+        if cols + w > max_cols:
+            break
+        res.append(ch)
+        cols += w
+    return "".join(res)
+
+
+def is_port_in_use(port: int) -> bool:
+    """Check if a local TCP port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.2)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def format_duration(seconds: int) -> str:
+    """Format seconds into HH:MM:SS."""
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def get_gnome_proxy_state() -> bool:
+    """Check if GNOME system proxy mode is manual."""
+    try:
+        res = subprocess.run(
+            ["gsettings", "get", "org.gnome.system.proxy", "mode"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        return "manual" in res.stdout
+    except Exception:
+        return False
+
+
+def set_gnome_proxy(enable: bool, port: int = DEFAULT_PROXY_PORT, http_port=None):
+    """Enable or disable GNOME desktop system proxy and sync proxy_env.sh via xhm_core."""
+    try:
+        sys.path.insert(0, os.path.expanduser("~/.local/lib"))
+        import xhm_core
+        xhm_core.set_gnome_proxy(enable, port, http_port=http_port if http_port is not None else port)
+        return
+    except Exception:
+        pass
+    # Fallback if xhm_core is unavailable
+    try:
+        h_port = http_port if http_port is not None else port
+        if enable:
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy.socks", "host", "127.0.0.1"], check=False)
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy.socks", "port", str(port)], check=False)
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy.http", "host", "127.0.0.1"], check=False)
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy.http", "port", str(h_port)], check=False)
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy.https", "host", "127.0.0.1"], check=False)
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy.https", "port", str(h_port)], check=False)
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy", "mode", "manual"], check=False)
+        else:
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy", "mode", "none"], check=False)
+    except Exception:
+        pass
+
+
+_cached_physical_ip = None
+_last_ip_check = 0.0
+
+
+def get_physical_interface_ip():
+    """Find the physical network interface IPv4 address to bypass tun0."""
+    global _cached_physical_ip, _last_ip_check
+    now = time.time()
+    if _cached_physical_ip and (now - _last_ip_check < 30):
+        return _cached_physical_ip
+
+    try:
+        res = subprocess.run(
+            ["ip", "route", "show", "table", "main"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        for line in res.stdout.splitlines():
+            if line.startswith("default "):
+                parts = line.split()
+                if "src" in parts:
+                    src_ip = parts[parts.index("src") + 1]
+                    if not src_ip.startswith("172.19.") and not src_ip.startswith("127."):
+                        _cached_physical_ip = src_ip
+                        _last_ip_check = now
+                        return src_ip
+                if "dev" in parts:
+                    iface = parts[parts.index("dev") + 1]
+                    if iface != "tun0":
+                        res2 = subprocess.run(
+                            ["ip", "-4", "addr", "show", "dev", iface],
+                            capture_output=True,
+                            text=True,
+                            timeout=1,
+                        )
+                        for line2 in res2.stdout.splitlines():
+                            line2 = line2.strip()
+                            if line2.startswith("inet "):
+                                ip_match = line2.split()[1].split("/")[0]
+                                _cached_physical_ip = ip_match
+                                _last_ip_check = now
+                                return ip_match
+    except Exception:
+        pass
+
+    return None
+
+
+def test_tcp_ping(host: str, port: int, timeout=2.2):
+    """
+    Test real TCP handshake ping latency in milliseconds directly to remote server,
+    bypassing local VPN / TUN interceptor (tun0).
+    """
+    physical_ip = get_physical_interface_ip()
+    port = int(port)
+    start = time.perf_counter()
+
+    if physical_ip:
+        try:
+            infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            if infos:
+                target_ip = infos[0][4][0]
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                sock.bind((physical_ip, 0))
+                sock.connect((target_ip, port))
+                elapsed = round((time.perf_counter() - start) * 1000)
+                sock.close()
+                return elapsed
+        except Exception:
+            return None
+
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        elapsed = round((time.perf_counter() - start) * 1000)
+        sock.close()
+        return elapsed
+    except Exception:
+        return None
+
+
+# --- Config Loader ---
+def load_nodes():
+    """Extract valid proxy nodes from custom configs and subscriptions."""
+    sys.path.insert(0, os.path.expanduser("~/.local/lib"))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lib")))
+    try:
+        import xhm_core
+        return xhm_core.load_all_nodes()
+    except Exception:
+        custom_store_file = os.path.expanduser("~/.local/share/xhm/custom_configs.json")
+        if os.path.exists(custom_store_file):
+            try:
+                with open(custom_store_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return []
+
+
+# --- Xray Config Builder (Fallback) ---
+def singbox_to_xray_outbound(sb: dict) -> dict:
+    """Converts a sing-box outbound to an Xray compatible outbound."""
+    t = sb.get("type", "").lower()
+    server = sb.get("server")
+    port = int(sb.get("server_port", 443))
+
+    outbound = {
+        "tag": "proxy",
+        "protocol": t,
+        "settings": {},
+        "streamSettings": {
+            "network": "tcp",
+            "security": "none",
+        },
+    }
+
+    tls_cfg = sb.get("tls", {})
+    is_tls = bool(tls_cfg.get("enabled"))
+
+    if is_tls or t == "trojan":
+        outbound["streamSettings"]["security"] = "tls"
+        tls_settings = {
+            "serverName": tls_cfg.get("server_name") or server,
+            "fingerprint": tls_cfg.get("utls", {}).get("fingerprint") or "chrome",
+        }
+        if tls_cfg.get("alpn"):
+            tls_settings["alpn"] = tls_cfg.get("alpn")
+
+        if tls_cfg.get("reality", {}).get("enabled"):
+            outbound["streamSettings"]["security"] = "reality"
+            reality_cfg = tls_cfg["reality"]
+            tls_settings["publicKey"] = reality_cfg.get("public_key", "")
+            tls_settings["shortId"] = reality_cfg.get("short_id", "")
+            tls_settings["show"] = False
+            outbound["streamSettings"]["realitySettings"] = tls_settings
+        else:
+            outbound["streamSettings"]["tlsSettings"] = tls_settings
+
+    transport = sb.get("transport", {})
+    tr_type = transport.get("type")
+    if tr_type:
+        outbound["streamSettings"]["network"] = tr_type
+        if tr_type == "ws":
+            outbound["streamSettings"]["wsSettings"] = {
+                "path": transport.get("path", "/"),
+                "headers": transport.get("headers", {}),
+            }
+        elif tr_type == "grpc":
+            outbound["streamSettings"]["grpcSettings"] = {
+                "serviceName": transport.get("service_name", ""),
+            }
+        elif tr_type == "xhttp":
+            outbound["streamSettings"]["xhttpSettings"] = {
+                "mode": transport.get("mode", "auto"),
+                "host": transport.get("host", ""),
+                "path": transport.get("path", "/"),
+            }
+
+    if t == "trojan":
+        outbound["settings"] = {
+            "servers": [{
+                "address": server,
+                "port": port,
+                "password": sb.get("password", ""),
+            }]
+        }
+    elif t == "vmess":
+        outbound["settings"] = {
+            "vnext": [{
+                "address": server,
+                "port": port,
+                "users": [{
+                    "id": sb.get("uuid", ""),
+                    "alterId": sb.get("alter_id", 0),
+                    "security": sb.get("security", "auto"),
+                }],
+            }]
+        }
+    elif t == "vless":
+        outbound["settings"] = {
+            "vnext": [{
+                "address": server,
+                "port": port,
+                "users": [{
+                    "id": sb.get("uuid", ""),
+                    "encryption": "none",
+                    "flow": sb.get("flow", ""),
+                }],
+            }]
+        }
+    elif t == "shadowsocks":
+        outbound["settings"] = {
+            "servers": [{
+                "address": server,
+                "port": port,
+                "method": sb.get("method", ""),
+                "password": sb.get("password", ""),
+            }]
+        }
+
+    return outbound
+
+
+def build_xray_config(outbound: dict, proxy_port: int) -> dict:
+    """Build complete runnable Xray config."""
+    return {
+        "log": {"loglevel": "warning"},
+        "inbounds": [
+            {
+                "tag": "mixed",
+                "port": proxy_port,
+                "listen": "127.0.0.1",
+                "protocol": "socks",
+                "settings": {"auth": "noauth", "udp": True},
+            },
+            {
+                "tag": "http-in",
+                "port": proxy_port + 1,
+                "listen": "127.0.0.1",
+                "protocol": "http",
+            },
+        ],
+        "outbounds": [
+            outbound,
+            {"tag": "direct", "protocol": "freedom"},
+        ],
+    }
+
+
+# --- Core Proxy Manager (Delegated to XHM Core Engine) ---
+sys.path.insert(0, os.path.expanduser("~/.local/lib"))
+import xhm_core
+
+ProxyManager = xhm_core.ProxyManager
+
+
+# --- Terminal UI (Curses) ---
+def draw_ui(stdscr, manager: ProxyManager):
+    curses.curs_set(0)
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_CYAN, -1)     # Header / Borders
+    curses.init_pair(2, curses.COLOR_GREEN, -1)    # Connected / ON
+    curses.init_pair(3, curses.COLOR_RED, -1)      # Disconnected / OFF
+    curses.init_pair(4, curses.COLOR_YELLOW, -1)   # Warning / Accent
+    curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)  # Highlighted item
+    curses.init_pair(6, curses.COLOR_WHITE, -1)    # Normal text
+    curses.init_pair(7, curses.COLOR_MAGENTA, -1)  # Tags
+
+    stdscr.nodelay(False)
+    stdscr.timeout(1000)
+
+    nodes = load_nodes()
+    selected_idx = 0
+    top_offset = 0
+    search_query = ""
+    is_searching = False
+
+    # Position on active node if connected
+    if manager.connected and manager.active_node:
+        for idx, n in enumerate(nodes):
+            if xhm_core.is_same_node(n, manager.active_node):
+                selected_idx = idx
+                break
+
+    def get_filtered_nodes():
+        if not search_query:
+            return nodes
+        q = search_query.lower()
+        return [n for n in nodes if q in n["tag"].lower() or q in n["type"].lower() or q in n["server"].lower()]
+
+    while True:
+        max_y, max_x = stdscr.getmaxyx()
+        stdscr.erase()
+
+        filtered_nodes = get_filtered_nodes()
+        if selected_idx >= len(filtered_nodes):
+            selected_idx = max(0, len(filtered_nodes) - 1)
+
+        # 1. Header Bar
+        title = " ⚡ XHM - XRAY PROXY CONTROLLER "
+        header = f"{title}(Nodes: {len(filtered_nodes)}/{len(nodes)})"
+        try:
+            stdscr.attron(curses.color_pair(1) | curses.A_BOLD)
+            stdscr.addstr(0, 0, header.ljust(max_x - 1)[:max_x - 1])
+            stdscr.attroff(curses.color_pair(1) | curses.A_BOLD)
+        except curses.error:
+            pass
+
+        # 2. Power Dashboard Card (Prominent ON / OFF Indicator)
+        is_conn = manager.connected
+        box_width = min(max_x - 2, 76)
+
+        try:
+            # Card Top Border
+            stdscr.addstr(1, 1, "┌" + ("─" * (box_width - 2)) + "┐", curses.color_pair(1))
+
+            # Row 1: Big Status Badge
+            stdscr.addstr(2, 1, "│", curses.color_pair(1))
+            status_badge = " [ 🟢 STATUS: ON / CONNECTED ] " if is_conn else " [ 🔴 STATUS: OFF / DISCONNECTED ] "
+            status_attr = (curses.color_pair(2) if is_conn else curses.color_pair(3)) | curses.A_BOLD
+            stdscr.addstr(2, 3, status_badge, status_attr)
+
+            sys_proxy_on = get_gnome_proxy_state()
+            sys_str = "SysProxy: ON " if sys_proxy_on else "SysProxy: OFF"
+            sys_attr = (curses.color_pair(2) if sys_proxy_on else curses.color_pair(4)) | curses.A_BOLD
+            stdscr.addstr(2, box_width - len(sys_str) - 2, sys_str, sys_attr)
+            stdscr.addstr(2, box_width, "│", curses.color_pair(1))
+
+            # Row 2: Active Server Details
+            stdscr.addstr(3, 1, "│", curses.color_pair(1))
+            if is_conn and manager.active_node:
+                uptime = format_duration(int(time.time() - (manager.start_time or time.time())))
+                node_info = f"Node: [{manager.active_node.get('type','').upper()}] {manager.active_node.get('tag','')}"
+                details = f"{node_info} | Port: {manager.proxy_port} | Uptime: {uptime}"
+            else:
+                details = "Press [Space] or [Enter] on any server below to connect."
+            stdscr.addstr(3, 3, safe_clip(details, box_width - 4))
+            stdscr.addstr(3, box_width, "│", curses.color_pair(1))
+
+            # Card Bottom Border
+            stdscr.addstr(4, 1, "└" + ("─" * (box_width - 2)) + "┘", curses.color_pair(1))
+        except curses.error:
+            pass
+
+        # 3. Search Bar
+        list_start_y = 6
+        if search_query or is_searching:
+            try:
+                prompt = f" 🔍 Filter: {search_query}{'█' if is_searching else ''} "
+                stdscr.addstr(5, 2, prompt[:max_x - 3], curses.color_pair(4) | curses.A_BOLD)
+                list_start_y = 7
+            except curses.error:
+                pass
+
+        # 4. Servers List
+        available_lines = max_y - list_start_y - 2
+        if available_lines > 0:
+            if selected_idx < top_offset:
+                top_offset = selected_idx
+            elif selected_idx >= top_offset + available_lines:
+                top_offset = selected_idx - available_lines + 1
+
+            for i in range(available_lines):
+                node_idx = top_offset + i
+                if node_idx >= len(filtered_nodes):
+                    break
+                curr_node = filtered_nodes[node_idx]
+                y = list_start_y + i
+
+                is_selected = (node_idx == selected_idx)
+                is_active = manager.connected and xhm_core.is_same_node(curr_node, manager.active_node)
+
+                mark = "✔ " if is_active else "  "
+                proto_badge = f"[{curr_node['type'].upper():5}]"
+                ping_str = f"[{curr_node['ping']}ms]" if curr_node["ping"] is not None else ""
+                tag_str = curr_node["tag"]
+                srv_str = f"({curr_node['server']}:{curr_node['port']})"
+
+                line_content = f" {mark}{proto_badge} {tag_str} {srv_str} {ping_str}"
+                line_display = safe_clip(line_content, max_x - 4)
+
+                attr = curses.color_pair(5) if is_selected else (curses.color_pair(2) if is_active else curses.color_pair(6))
+                if is_active and not is_selected:
+                    attr |= curses.A_BOLD
+
+                try:
+                    stdscr.addstr(y, 1, line_display, attr)
+                except curses.error:
+                    pass
+
+        # 5. Status / Message Line
+        status_line_y = max_y - 2
+        if manager.status_msg:
+            try:
+                stdscr.addstr(status_line_y, 1, safe_clip(f" {manager.status_msg} ", max_x - 2), curses.color_pair(4))
+            except curses.error:
+                pass
+
+        # 6. Bottom Keybindings Bar
+        footer_y = max_y - 1
+        footer_text = " [Enter/Space] Toggle ON/OFF  [d] Disconnect  [s] SysProxy  [t] Ping  [/] Search  [q] Exit (Keep ON)"
+        try:
+            stdscr.attron(curses.color_pair(1) | curses.A_REVERSE)
+            stdscr.addstr(footer_y, 0, footer_text.ljust(max_x - 1)[:max_x - 1])
+            stdscr.attroff(curses.color_pair(1) | curses.A_REVERSE)
+        except curses.error:
+            pass
+
+        stdscr.refresh()
+
+        # Handle user input
+        try:
+            ch = stdscr.getch()
+        except curses.error:
+            ch = -1
+
+        if ch == -1:
+            continue
+
+        if is_searching:
+            if ch in (10, 13):  # Enter
+                is_searching = False
+            elif ch == 27:      # Escape
+                is_searching = False
+                search_query = ""
+            elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                search_query = search_query[:-1]
+                selected_idx = 0
+            elif 32 <= ch <= 126:
+                search_query += chr(ch)
+                selected_idx = 0
+            continue
+
+        # Navigation
+        if ch in (curses.KEY_UP, ord("k"), ord("K")):
+            if selected_idx > 0:
+                selected_idx -= 1
+        elif ch in (curses.KEY_DOWN, ord("j"), ord("J")):
+            if selected_idx < len(filtered_nodes) - 1:
+                selected_idx += 1
+        elif ch in (curses.KEY_PPAGE,):
+            selected_idx = max(0, selected_idx - 10)
+        elif ch in (curses.KEY_NPAGE,):
+            selected_idx = min(len(filtered_nodes) - 1, selected_idx + 10)
+
+        # Actions
+        elif ch in (10, 13, ord(" ")):  # Enter or Space: Toggle ON / OFF or Switch
+            if filtered_nodes:
+                target_node = filtered_nodes[selected_idx]
+                manager.toggle(target_node)
+
+        elif ch in (ord("d"), ord("D"), ord("x"), ord("X")):  # Explicit Disconnect (Turn OFF)
+            manager.stop()
+
+        elif ch in (ord("s"), ord("S"), ord("p"), ord("P")):  # Toggle GNOME System Proxy
+            cur_state = get_gnome_proxy_state()
+            set_gnome_proxy(not cur_state, manager.proxy_port)
+            manager.status_msg = f"System proxy set to {'ON' if not cur_state else 'OFF'}"
+
+        elif ch in (ord("r"), ord("R")):  # Reload
+            nodes = load_nodes()
+            manager.status_msg = f"Reloaded {len(nodes)} valid nodes."
+            selected_idx = 0
+
+        elif ch in (ord("/"),):  # Search
+            is_searching = True
+            search_query = ""
+
+        elif ch in (ord("t"), ord("T")):  # Ping
+            if filtered_nodes:
+                target = filtered_nodes[selected_idx]
+                manager.status_msg = f"Testing ping to {target['server']}..."
+                stdscr.refresh()
+                latency = test_tcp_ping(target["server"], target["port"])
+                target["ping"] = latency
+                manager.status_msg = f"Ping {target['server']}: {latency}ms" if latency else f"Ping timeout: {target['server']}"
+
+        elif ch in (ord("q"), ord("Q"), 27):  # Exit TUI
+            # Clean exit keeping background daemon running!
+            break
+
+
+# --- CLI Commands Handler ---
+def handle_cli_args(args, manager: ProxyManager):
+    """Handle non-interactive command line subcommands."""
+    cmd = args.command.lower() if args.command else None
+
+    if cmd in ("status", "info"):
+        print("\n" + "=" * 50)
+        print("⚡ XHM - Proxy Status")
+        print("=" * 50)
+        if manager.connected and manager.active_node:
+            uptime = format_duration(int(time.time() - (manager.start_time or time.time())))
+            print(f"Status:       🟢 ON (Connected)")
+            print(f"Server Name:  {manager.active_node.get('tag')}")
+            print(f"Protocol:     {manager.active_node.get('type', '').upper()}")
+            print(f"Endpoint:     {manager.active_node.get('server')}:{manager.active_node.get('port')}")
+            print(f"Local Proxy:  127.0.0.1:{manager.proxy_port} (SOCKS5/HTTP)")
+            print(f"System Proxy: {'ENABLED' if get_gnome_proxy_state() else 'DISABLED'}")
+            print(f"TUN Mode:     {'ENABLED (xhm-tun)' if xhm_core.is_tun_active() else 'DISABLED'}")
+            print(f"Core Engine:  {manager.core_name or 'Xray Core'}")
+            print(f"Uptime:       {uptime}")
+        else:
+            print("Status:       🔴 OFF (Disconnected)")
+            print(f"System Proxy: {'ENABLED' if get_gnome_proxy_state() else 'DISABLED'}")
+            print(f"TUN Mode:     {'ENABLED (xhm-tun)' if xhm_core.is_tun_active() else 'DISABLED'}")
+        print("=" * 50 + "\n")
+        sys.exit(0)
+
+    elif cmd in ("off", "stop", "disconnect", "kill"):
+        print("Stopping proxy connection...")
+        manager.stop()
+        print("🔴 Proxy turned OFF. GNOME system proxy disabled.")
+        sys.exit(0)
+
+    elif cmd in ("on", "start", "connect"):
+        nodes = load_nodes()
+        if not nodes:
+            print("❌ No valid nodes found.")
+            sys.exit(1)
+
+        target = nodes[0]
+        if args.target:
+            matches = [n for n in nodes if args.target.lower() in n["tag"].lower() or args.target.lower() in n["server"].lower()]
+            if matches:
+                target = matches[0]
+
+        print(f"Connecting to [{target['type'].upper()}] {target['tag']} ({target['server']}:{target['port']})...")
+        if manager.start(target):
+            print(f"🟢 Connected successfully! Proxy listening on 127.0.0.1:{manager.proxy_port}")
+            print("System proxy enabled.")
+        else:
+            print("❌ Failed to connect.")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif cmd == "toggle":
+        if manager.connected:
+            manager.stop()
+            print("🔴 Disconnected (OFF).")
+        else:
+            nodes = load_nodes()
+            if nodes:
+                manager.start(nodes[0])
+                print(f"🟢 Connected (ON) to {nodes[0]['tag']}.")
+            else:
+                print("❌ No nodes available.")
+        sys.exit(0)
+
+    elif cmd in ("list", "ls"):
+        nodes = load_nodes()
+        print(f"\nAvailable Nodes ({len(nodes)}):")
+        print("-" * 60)
+        for i, n in enumerate(nodes, 1):
+            active_mark = "✔ (ON)" if manager.connected and xhm_core.is_same_node(n, manager.active_node) else ""
+            print(f"{i:2d}. [{n['type'].upper():5}] {n['tag']} ({n['server']}:{n['port']}) {active_mark}")
+        print("-" * 60 + "\n")
+        sys.exit(0)
+
+    elif cmd in ("tun", "vpn"):
+        sub = args.target.lower() if args.target else "toggle"
+        target_state = (
+            True if sub in ("on", "start", "enable")
+            else False if sub in ("off", "stop", "disable")
+            else not xhm_core.is_tun_active()
+        )
+        ok, msg = xhm_core.set_tun_mode_detailed(target_state, manager=manager)
+        if ok:
+            print(f"{'🟢' if target_state else '🔴'} {msg}")
+            sys.exit(0)
+        else:
+            print(f"❌ {msg}")
+            sys.exit(1)
+
+    elif cmd in ("gui", "web"):
+        gui_bin = os.path.expanduser("~/.local/bin/xhm-gui")
+        if os.path.exists(gui_bin) and os.access(gui_bin, os.X_OK):
+            subprocess.Popen([gui_bin], start_new_session=True)
+            print("🚀 Launched XHM Modern GUI.")
+        else:
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:18501")
+            print("🚀 Opened http://127.0.0.1:18501")
+        sys.exit(0)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Xray Terminal Proxy Manager (XHM)")
+    parser.add_argument("command", nargs="?", choices=["on", "off", "toggle", "status", "list", "stop", "start", "gui", "web", "tun", "vpn"], help="CLI command")
+    parser.add_argument("target", nargs="?", help="Server name or IP for 'on' command")
+    args = parser.parse_args()
+
+    manager = ProxyManager()
+
+    if args.command:
+        handle_cli_args(args, manager)
+        return
+
+    # Non-destructive signal handling
+    def sig_handler(sig, frame):
+        # On Ctrl+C, exit curses without terminating the background proxy!
+        try:
+            curses.endwin()
+        except Exception:
+            pass
+        if manager.connected:
+            print("\n🟢 xhm exited: Proxy continues running in background.")
+            print("   Run 'xhm off' to disconnect, or 'xhm' to return to menu.\n")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
+    try:
+        curses.wrapper(lambda stdscr: draw_ui(stdscr, manager))
+    finally:
+        pass
+
+    # Print user-friendly daemon status after exiting TUI
+    if manager.connected and manager.active_node:
+        print("\n" + "=" * 55)
+        print("🟢 xhm is running in background (Daemon Mode)")
+        print(f"   Node:         [{manager.active_node.get('type','').upper()}] {manager.active_node.get('tag')}")
+        print(f"   Proxy Port:   127.0.0.1:{manager.proxy_port} (SOCKS5/HTTP)")
+        print(f"   System Proxy: {'ENABLED' if get_gnome_proxy_state() else 'DISABLED'}")
+        print("   Commands:")
+        print("     xhm         -> Reopen interactive menu")
+        print("     xhm off     -> Disconnect & turn off")
+        print("     xhm status  -> Check connection info")
+        print("=" * 55 + "\n")
+
+
+if __name__ == "__main__":
+    main()
