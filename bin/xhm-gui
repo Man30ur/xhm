@@ -6,14 +6,15 @@ PORT=18501
 URL="http://127.0.0.1:${PORT}"
 WEB_DIR="$HOME/.local/share/xhm/web"
 PROFILE_DIR="$HOME/.local/share/xhm/chrome-profile"
+SERVER_LOG="/tmp/xhm/server.log"
 
-mkdir -p "$PROFILE_DIR"
+mkdir -p "$PROFILE_DIR" "/tmp/xhm"
 
 # 1. Start local API server daemon if not already listening
 if ! (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
-    nohup python3 "$WEB_DIR/server.py" >/dev/null 2>&1 &
+    nohup python3 "$WEB_DIR/server.py" >>"$SERVER_LOG" 2>&1 &
     # Wait for server to bind
-    for i in {1..30}; do
+    for _ in {1..30}; do
         if (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
             break
         fi
@@ -26,24 +27,18 @@ export CHROME_DESKTOP="xhm-gui.desktop"
 export WAYLAND_APP_ID="xhm-gui"
 
 # 2. Launch standalone modern borderless app window
-if command -v google-chrome >/dev/null 2>&1; then
-    exec google-chrome \
-        --app="$URL" \
-        --user-data-dir="$PROFILE_DIR" \
-        --window-size=1040,740 \
-        --class=xhm-gui \
-        --name=xhm-gui \
-        --no-first-run \
-        --no-default-browser-check \
-        "$@"
-elif command -v chromium >/dev/null 2>&1; then
-    exec chromium \
-        --app="$URL" \
-        --user-data-dir="$PROFILE_DIR" \
-        --window-size=1040,740 \
-        --class=xhm-gui \
-        --name=xhm-gui \
-        "$@"
-else
-    exec xdg-open "$URL"
-fi
+for browser in google-chrome google-chrome-stable chromium chromium-browser brave-browser; do
+    if command -v "$browser" >/dev/null 2>&1; then
+        exec "$browser" \
+            --app="$URL" \
+            --user-data-dir="$PROFILE_DIR" \
+            --window-size=1040,740 \
+            --class=xhm-gui \
+            --name=xhm-gui \
+            --no-first-run \
+            --no-default-browser-check \
+            "$@"
+    fi
+done
+
+exec xdg-open "$URL"

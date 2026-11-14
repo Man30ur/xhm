@@ -5,26 +5,24 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GRANT_TUN_CAP=1
 SKIP_DEPS=0
+LINK_SYSTEM_BIN=1
 
 for arg in "$@"; do
     case "$arg" in
         --grant-tun-cap) GRANT_TUN_CAP=1 ;;
         --no-grant-tun-cap) GRANT_TUN_CAP=0 ;;
         --no-deps) SKIP_DEPS=1 ;;
+        --user-only|--no-system-link) LINK_SYSTEM_BIN=0 ;;
         -h|--help)
-            echo "Usage: ./install.sh [--no-grant-tun-cap] [--no-deps]"
+            echo "Usage: ./install.sh [--no-grant-tun-cap] [--no-deps] [--user-only]"
             echo "  --grant-tun-cap     Grant cap_net_admin to sing-box (default) for passwordless TUN"
             echo "  --no-grant-tun-cap  Skip granting capabilities (TUN toggles may need pkexec)"
             echo "  --no-deps           Skip automatic package and core installation"
+            echo "  --user-only         Install to ~/.local only without /usr/local/bin symlinks"
             exit 0
             ;;
     esac
 done
-
-echo "==> Installing XHM..."
-
-mkdir -p "$HOME/.local/bin" "$HOME/.local/lib" "$HOME/.local/share/xhm/web"
-export PATH="$HOME/.local/bin:$PATH"
 
 run_priv() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -33,6 +31,47 @@ run_priv() {
         sudo "$@"
     fi
 }
+
+# Self-bootstrap when invoked standalone (e.g. bash -c "$(curl -fsSL ...)")
+if [ ! -f "$SCRIPT_DIR/lib/xhm_core.py" ]; then
+    XHM_REPO_URL="${XHM_REPO_URL:-https://github.com/Man30ur/xhm.git}"
+    XHM_REPO_DIR="${XHM_REPO_DIR:-$HOME/.local/share/xhm/repo}"
+    echo "==> Bootstrapping XHM from $XHM_REPO_URL..."
+
+    if ! command -v git >/dev/null 2>&1; then
+        echo "==> Installing git..."
+        if command -v apt-get >/dev/null 2>&1; then
+            run_priv apt-get update -qq && run_priv apt-get install -y git
+        elif command -v dnf >/dev/null 2>&1; then
+            run_priv dnf install -y git
+        elif command -v pacman >/dev/null 2>&1; then
+            run_priv pacman -Sy --noconfirm --needed git
+        elif command -v zypper >/dev/null 2>&1; then
+            run_priv zypper install -y git
+        else
+            echo "❌ git is required to bootstrap XHM. Please install git and retry."
+            exit 1
+        fi
+    fi
+
+    if [ -d "$XHM_REPO_DIR/.git" ]; then
+        echo "==> Updating existing repository at $XHM_REPO_DIR..."
+        if ! git -C "$XHM_REPO_DIR" pull --ff-only; then
+            echo "⚠️  Could not fast-forward $XHM_REPO_DIR; installing from local repository state."
+        fi
+    else
+        mkdir -p "$(dirname "$XHM_REPO_DIR")"
+        git clone "$XHM_REPO_URL" "$XHM_REPO_DIR"
+    fi
+
+    export XHM_BOOTSTRAPPED=1
+    exec bash "$XHM_REPO_DIR/install.sh" "$@"
+fi
+
+echo "==> Installing XHM..."
+
+mkdir -p "$HOME/.local/bin" "$HOME/.local/lib" "$HOME/.local/share/xhm/web"
+export PATH="$HOME/.local/bin:$PATH"
 
 install_system_packages() {
     local missing_cmds=()
@@ -44,6 +83,9 @@ install_system_packages() {
     command -v ssh >/dev/null 2>&1 || missing_cmds+=("ssh")
     command -v openssl >/dev/null 2>&1 || missing_cmds+=("openssl")
     command -v ip >/dev/null 2>&1 || missing_cmds+=("ip")
+    if [ "$GRANT_TUN_CAP" -eq 1 ] && ! command -v setcap >/dev/null 2>&1 && [ ! -x /sbin/setcap ] && [ ! -x /usr/sbin/setcap ]; then
+        missing_cmds+=("setcap")
+    fi
 
     if [ "${#missing_cmds[@]}" -eq 0 ]; then
         echo "✔ System packages already installed."
@@ -57,6 +99,7 @@ install_system_packages() {
             case "$c" in
                 ssh) pkgs+=("openssh-client") ;;
                 ip) pkgs+=("iproute2") ;;
+                setcap) pkgs+=("libcap2-bin") ;;
                 *) pkgs+=("$c") ;;
             esac
         done
@@ -68,6 +111,7 @@ install_system_packages() {
             case "$c" in
                 ssh) pkgs+=("openssh-clients") ;;
                 ip) pkgs+=("iproute") ;;
+                setcap) pkgs+=("libcap") ;;
                 *) pkgs+=("$c") ;;
             esac
         done
@@ -79,6 +123,7 @@ install_system_packages() {
                 python3) pkgs+=("python") ;;
                 ssh) pkgs+=("openssh") ;;
                 ip) pkgs+=("iproute2") ;;
+                setcap) pkgs+=("libcap") ;;
                 *) pkgs+=("$c") ;;
             esac
         done
@@ -214,14 +259,71 @@ if [ -f "$SCRIPT_DIR/lib/xhm_tun_helper.py" ]; then
     chmod +x "$HOME/.local/lib/xhm_tun_helper.py"
 fi
 
-# 3. Copy Web Assets & Server
+# 3. Copy Web Assets & Version
 cp -r "$SCRIPT_DIR/web/"* "$HOME/.local/share/xhm/web/"
+if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    cp "$SCRIPT_DIR/VERSION" "$HOME/.local/share/xhm/VERSION"
+fi
 
 # 4. Copy Binaries & Permissions
 cp "$SCRIPT_DIR/bin/xhm" "$HOME/.local/bin/xray-menu"
 cp "$SCRIPT_DIR/bin/xhm-gui" "$HOME/.local/bin/xhm-gui"
 ln -sf "$HOME/.local/bin/xray-menu" "$HOME/.local/bin/xhm"
 chmod +x "$HOME/.local/bin/xray-menu" "$HOME/.local/bin/xhm" "$HOME/.local/bin/xhm-gui"
+
+# 4b. Record installation metadata for automatic Git update checks
+if command -v python3 >/dev/null 2>&1; then
+    XHM_META_SCRIPT_DIR="$SCRIPT_DIR" XHM_META_DEST="$HOME/.local/share/xhm/install_meta.json" XHM_BOOTSTRAPPED="${XHM_BOOTSTRAPPED:-0}" python3 - <<'PY' || true
+import datetime
+import json
+import os
+import subprocess
+
+repo_dir = os.path.realpath(os.environ["XHM_META_SCRIPT_DIR"])
+dest_file = os.environ["XHM_META_DEST"]
+version = "1.0.0"
+version_file = os.path.join(repo_dir, "VERSION")
+if os.path.isfile(version_file):
+    try:
+        with open(version_file, "r", encoding="utf-8") as f:
+            val = f.read().strip()
+            if val:
+                version = val
+    except OSError:
+        pass
+
+def _git(*args):
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", repo_dir, *args],
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+        return out.decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+commit = _git("rev-parse", "HEAD")
+short_commit = _git("rev-parse", "--short", "HEAD")
+branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+if branch == "HEAD":
+    branch = ""
+remote_url = _git("remote", "get-url", "origin") or "https://github.com/Man30ur/xhm.git"
+
+meta = {
+    "version": version,
+    "commit": commit,
+    "short_commit": short_commit,
+    "branch": branch or "main",
+    "remote_url": remote_url,
+    "repo_dir": repo_dir,
+    "installed_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "bootstrap_mode": os.environ.get("XHM_BOOTSTRAPPED") == "1",
+}
+with open(dest_file, "w", encoding="utf-8") as f:
+    json.dump(meta, f, indent=2)
+PY
+fi
 
 # 5. Initialize sample configs if not present
 if [ ! -f "$HOME/.local/share/xhm/custom_configs.json" ]; then
@@ -235,7 +337,7 @@ cat <<EOF > "$DESKTOP_DIR/xhm-gui.desktop"
 [Desktop Entry]
 Name=XHM Manager
 Comment=Modern Linux Proxy & VPN Client (Xray / Sing-box / SSH)
-Exec=$HOME/.local/bin/xhm-gui
+Exec="$HOME/.local/bin/xhm-gui"
 Icon=$HOME/.local/share/xhm/web/icon-512.png
 Terminal=false
 Type=Application
@@ -277,10 +379,34 @@ else
     echo "ℹ️  Skipped TUN privilege grant. Re-run with default flags (or --grant-tun-cap) for passwordless TUN."
 fi
 
-# 8. PATH reminder if needed
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+# 8. Ensure global CLI symlinks (/usr/local/bin) & PATH availability
+link_system_cmd() {
+    local name="$1"
+    local target="$HOME/.local/bin/$name"
+    local dest="/usr/local/bin/$name"
+    if [ -L "$dest" ] && [ "$(readlink -f "$dest" 2>/dev/null || true)" = "$(readlink -f "$target" 2>/dev/null || true)" ]; then
+        return 0
+    fi
+    if [ -w "/usr/local/bin" ]; then
+        ln -sf "$target" "$dest"
+    else
+        run_priv ln -sf "$target" "$dest" 2>/dev/null || return 1
+    fi
+}
+
+if [ "$LINK_SYSTEM_BIN" -eq 1 ] && [ -d "/usr/local/bin" ]; then
+    if link_system_cmd "xhm" && link_system_cmd "xhm-gui"; then
+        echo "✔ Linked 'xhm' and 'xhm-gui' into /usr/local/bin for immediate shell access."
+    fi
+fi
+
+if ! command -v xhm >/dev/null 2>&1 && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     echo "ℹ️  Add ~/.local/bin to your PATH if not already configured:"
     echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
+fi
+
+if pgrep -f "/.local/share/xhm/web/server.py" >/dev/null 2>&1; then
+    echo "ℹ️  An active XHM web server daemon is running; restart xhm-gui when convenient to load updated code."
 fi
 
 echo "==> Installation complete!"

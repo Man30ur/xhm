@@ -50,29 +50,38 @@ Ubuntu/Debian, Fedora, Arch, or openSUSE.
 `./install.sh` installs dependencies automatically (Python 3.8+, `curl`, `xray`, `sing-box`, …).
 
 ### Install
+
+**Option 1 — One-command install (no manual clone needed):**
 ```bash
-git clone https://github.com/Man30ur/xhm.git
-cd xhm
-./install.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Man30ur/xhm/main/install.sh)"
+```
+
+**Option 2 — Clone & install in one line:**
+```bash
+git clone https://github.com/Man30ur/xhm.git && ./xhm/install.sh
 ```
 
 By default the installer:
 - grants `cap_net_admin` to `sing-box` (passwordless TUN)
 - installs a polkit rule for TUN DNS via `systemd-resolved`
+- links `xhm` and `xhm-gui` into `/usr/local/bin` so commands work immediately
 
 Optional flags:
 ```bash
 ./install.sh --no-grant-tun-cap   # skip passwordless TUN setup
 ./install.sh --no-deps            # copy app files only
+./install.sh --user-only          # install to ~/.local only (no /usr/local/bin symlinks)
 ```
 
-### Usage
+### Usage & Updates
 ```bash
-xhm-gui    # Desktop GUI
-xhm        # Terminal UI / interactive menu
+xhm-gui           # Desktop GUI (shows an "Update" badge when a new Git commit is out)
+xhm               # Terminal UI / interactive menu
 xhm status
 xhm tun on
 xhm tun off
+xhm update --check
+xhm update        # Pull latest clean Git updates & sync local files
 ```
 
 ### Notes
@@ -93,26 +102,35 @@ xhm tun off
 - GUI دسکتاپ (`xhm-gui`) و منوی ترمینال (`xhm`)
 - پروکسی سیستم GNOME
 - **TUN سراسری** (`xhm-tun`) — بعد از نصب بدون پسورد تکراری
+- تشخیص خودکار نسخه جدید از گیت در رابط گرافیکی و CLI (`xhm update`)
 - سرعت لحظه‌ای، پینگ، آنالیتیکس، سابسکریپشن، QR
 
 ### نصب
+
+**روش اول — نصب تک‌دستوری (خودکار کلون و نصب می‌کند):**
 ```bash
-git clone https://github.com/Man30ur/xhm.git
-cd xhm
-./install.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Man30ur/xhm/main/install.sh)"
+```
+
+**روش دوم — کلون و نصب در یک خط:**
+```bash
+git clone https://github.com/Man30ur/xhm.git && ./xhm/install.sh
 ```
 
 به‌صورت پیش‌فرض:
 - دسترسی `cap_net_admin` به `sing-box` داده می‌شود
 - قانون polkit برای DNS حالت TUN نصب می‌شود
+- دستورهای `xhm` و `xhm-gui` در `/usr/local/bin` لینک می‌شوند تا بلافاصله در ترمینال قابل اجرا باشند
 
-### استفاده
+### استفاده و آپدیت
 ```bash
-xhm-gui      # رابط گرافیکی
-xhm          # منوی ترمینال
+xhm-gui           # رابط گرافیکی (در صورت وجود آپدیت، نشانگر Update نمایش داده می‌شود)
+xhm               # منوی ترمینال
 xhm status
 xhm tun on
 xhm tun off
+xhm update --check
+xhm update        # دریافت و اعمال امن آخرین نسخه از گیت
 ```
 
 ### نکته

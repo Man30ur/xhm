@@ -4,7 +4,7 @@
   "start_url": "/",
   "display": "standalone",
   "background_color": "#090a10",
-  "theme_color": "#2563eb",
+  "theme_color": "#10121a",
   "description": "Modern Proxy & VPN Manager for Xray",
   "icons": [
     {

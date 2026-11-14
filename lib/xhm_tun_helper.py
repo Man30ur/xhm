@@ -2,6 +2,7 @@
 """Privileged helper for starting/stopping XHM's self-contained xhm-tun interface."""
 import argparse
 import os
+import pwd
 import signal
 import subprocess
 import sys
@@ -116,7 +117,8 @@ def _start_tun(
 
     _stop_pid_file(pid_file, iface=iface)
 
-    os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(pid_file)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
     log_fp = open(log_file, "a", encoding="utf-8")
     proc = subprocess.Popen(
         [singbox_bin, "run", "-c", config_file],
@@ -134,9 +136,21 @@ def _start_tun(
     # unprivileged TUN toggles can append logs without Permission denied.
     try:
         uid = int(os.environ.get("PKEXEC_UID") or os.environ.get("SUDO_UID") or "0")
-        gid = int(os.environ.get("PKEXEC_GID") or os.environ.get("SUDO_GID") or str(uid))
     except ValueError:
-        uid, gid = 0, 0
+        uid = 0
+    gid_raw = os.environ.get("PKEXEC_GID") or os.environ.get("SUDO_GID")
+    if gid_raw:
+        try:
+            gid = int(gid_raw)
+        except ValueError:
+            gid = uid
+    elif uid > 0:
+        try:
+            gid = pwd.getpwuid(uid).pw_gid
+        except KeyError:
+            gid = uid
+    else:
+        gid = 0
     for path in (pid_file, log_file):
         try:
             os.chmod(path, 0o644)
