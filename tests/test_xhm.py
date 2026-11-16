@@ -846,6 +846,60 @@ class TestProxyManagerLifecycle(_IsolatedXhmTestCase):
         self.assertTrue(mgr._manual_stop)
         self.assertEqual(stats["down_bytes"], 0)
 
+    def test_set_tun_mode_rejects_unhealthy_proxy_path(self):
+        with mock.patch("xhm_core.is_tun_supported", return_value=True), \
+             mock.patch("xhm_core.has_external_tun", return_value=None), \
+             mock.patch("xhm_core._find_active_proxy_context", return_value=(39850, {"tag": "N1", "server": "n1.example.com"})), \
+             mock.patch("xhm_core.verify_http_proxy_live", return_value=False) as mock_live, \
+             mock.patch("xhm_core.is_tun_active", return_value=False), \
+             mock.patch("xhm_core.build_singbox_tun_config") as mock_build:
+            ok, msg = xhm_core.set_tun_mode_detailed(True)
+
+        self.assertFalse(ok)
+        self.assertIn("not responding", msg.lower())
+        mock_live.assert_called()
+        mock_build.assert_not_called()
+
+    def test_path_health_check_reconnects_after_fail_streak(self):
+        mgr = self._make_manager()
+        node = _wrap_node("vless://11111111-1111-1111-1111-111111111111@dead.example.com:443?security=none#Dead")
+        mgr.connected = True
+        mgr.active_node = node
+        mgr.proc = _FakePopenProc(alive=True)
+        mgr._last_path_check = 0.0
+        mgr._path_fail_streak = xhm_core.PATH_HEALTH_FAIL_THRESHOLD - 1
+        mgr._path_healthy = False
+
+        with mock.patch("xhm_core.verify_http_proxy_live", return_value=False), \
+             mock.patch("xhm_core.is_tun_active", return_value=False), \
+             mock.patch.object(mgr, "stop") as mock_stop, \
+             mock.patch.object(mgr, "_trigger_auto_reconnect") as mock_reconn, \
+             mock.patch.object(mgr, "_append_log"):
+            mgr._run_path_health_check()
+
+        mock_stop.assert_called_once_with(silent=True, unexpected=True)
+        mock_reconn.assert_called_once()
+        self.assertIn("half-dead", mock_reconn.call_args[0][1].lower())
+
+    def test_path_health_check_restores_verified_status(self):
+        mgr = self._make_manager()
+        node = _wrap_node("vless://11111111-1111-1111-1111-111111111111@ok.example.com:443?security=none#OK")
+        mgr.connected = True
+        mgr.active_node = node
+        mgr.proc = _FakePopenProc(alive=True)
+        mgr._last_path_check = 0.0
+        mgr._path_fail_streak = 2
+        mgr._path_healthy = False
+        mgr.status_msg = "⚠️ Connected to OK (Path Unhealthy — reconnecting soon)"
+
+        with mock.patch("xhm_core.verify_http_proxy_live", return_value=True), \
+             mock.patch.object(mgr, "_append_log"):
+            mgr._run_path_health_check()
+
+        self.assertTrue(mgr._path_healthy)
+        self.assertEqual(mgr._path_fail_streak, 0)
+        self.assertIn("Verified Live", mgr.status_msg)
+
 
 class TestWebServerApi(_IsolatedXhmTestCase):
     def setUp(self):
@@ -985,6 +1039,24 @@ class TestWebServerApi(_IsolatedXhmTestCase):
         self.assertEqual(c3, 200)
         self.assertIsInstance(json.loads(b3), list)
 
+    def test_status_and_toggle_lan_expose_lan_ip(self):
+        with mock.patch("xhm_core.get_physical_interface_ip", return_value="192.0.2.55"):
+            code, _, body = self._request("GET", "/api/status")
+            self.assertEqual(code, 200)
+            status = json.loads(body)
+            self.assertEqual(status.get("lan_ip"), "192.0.2.55")
+            self.assertEqual(status.get("http_port"), self.test_mgr.proxy_port + 1)
+            self.assertIn("path_healthy", status)
+
+            code2, _, body2 = self._request("POST", "/api/toggle-lan", body={"enable": True})
+            self.assertEqual(code2, 200)
+            toggled = json.loads(body2)
+            self.assertTrue(toggled.get("success"))
+            self.assertTrue(toggled.get("allow_lan"))
+            self.assertEqual(toggled.get("lan_ip"), "192.0.2.55")
+            self.assertEqual(toggled.get("http_port"), self.test_mgr.proxy_port + 1)
+            self.assertTrue(self.test_mgr.allow_lan)
+
 
 class TestCliAndTuiHelpers(_IsolatedXhmTestCase):
     def test_ping_sni_for_node(self):
@@ -1120,6 +1192,10 @@ class TestWebUiAssets(unittest.TestCase):
         self.assertIn(".btn-action.active", html)
         self.assertRegex(html, r"#addModal\s*\{[^}]*z-index:\s*1050")
         self.assertIn('id="toastContainer" role="status" aria-live="polite"', html)
+        self.assertIn('id="lanShareHint"', html)
+        self.assertIn("lan_ip", html)
+        self.assertIn("path_healthy", html)
+        self.assertIn("Path unhealthy", html)
 
         for modal_id in ("addModal", "inspectorModal", "subsModal", "trafficModal", "confirmModal", "updateModal"):
             self.assertRegex(html, rf'id="{modal_id}"[^>]*role="dialog"[^>]*aria-modal="true"')

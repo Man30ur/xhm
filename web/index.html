@@ -2104,9 +2104,10 @@
         </label>
       </div>
 
-      <div class="control-item" title="Allow devices on your local Wi-Fi/LAN to connect via this proxy">
+      <div class="control-item" title="Share this proxy with phones on the same Wi-Fi (not a hotspot — set Manual HTTP proxy on the phone)">
         <div class="control-item-meta">
           <div class="control-item-title">LAN Sharing</div>
+          <div class="control-item-hint" id="lanShareHint">Same Wi-Fi → phone Manual proxy</div>
         </div>
         <label class="switch">
           <input type="checkbox" id="swLanShare" aria-label="LAN Sharing" onchange="toggleLanSharing(this.checked)">
@@ -2800,15 +2801,18 @@
         mainBtn.innerHTML = '<span>Connecting...</span>';
         coreBadge.textContent = 'Starting';
       } else if (appStatus.connected && appStatus.active_node) {
-        const isWarning = /unverified|check internet|warn/i.test(cleanMsg);
+        const pathUnhealthy = appStatus.path_healthy === false || /path unhealthy|half-dead|unresponsive/i.test(cleanMsg);
+        const isWarning = pathUnhealthy || /unverified|check internet|warn/i.test(cleanMsg);
         card.classList.remove('has-error', 'is-reconnecting');
         card.classList.add('connected');
         card.classList.toggle('is-warning', isWarning);
 
-        label.textContent = isWarning ? 'UNVERIFIED' : 'CONNECTED';
+        label.textContent = pathUnhealthy ? 'UNHEALTHY' : (isWarning ? 'UNVERIFIED' : 'CONNECTED');
         activeTag.textContent = appStatus.active_node.tag || 'Active Proxy';
         const baseEp = `${appStatus.active_node.server}:${appStatus.active_node.port} (${(appStatus.active_node.type || '').toUpperCase()})`;
-        activeEndpoint.textContent = isWarning ? `${appStatus.active_node.server}:${appStatus.active_node.port} • Unverified internet` : baseEp;
+        activeEndpoint.textContent = pathUnhealthy
+          ? `${appStatus.active_node.server}:${appStatus.active_node.port} • Path unhealthy`
+          : (isWarning ? `${appStatus.active_node.server}:${appStatus.active_node.port} • Unverified internet` : baseEp);
         activeEndpoint.title = cleanMsg || baseEp;
         activeEndpoint.classList.remove('error-text');
 
@@ -2914,10 +2918,25 @@
 
       const socksPort = appStatus.proxy_port || 10850;
       const httpPort = appStatus.http_port || (socksPort + 1);
-      const host = appStatus.allow_lan ? '0.0.0.0' : '127.0.0.1';
+      const lanIp = appStatus.lan_ip || '';
+      const allowLan = !!(appStatus.allow_lan || (appStatus.traffic && appStatus.traffic.allow_lan));
+      // Phones need the PC's Wi-Fi IP; 0.0.0.0 is only a bind address.
+      const host = allowLan ? (lanIp || '0.0.0.0') : '127.0.0.1';
       if (portLabel) {
         portLabel.textContent = `${host}:${socksPort} / :${httpPort}`;
-        portLabel.title = `SOCKS5 ${host}:${socksPort} | HTTP ${host}:${httpPort} (Click to copy)`;
+        portLabel.title = allowLan
+          ? `Phone (same Wi-Fi): HTTP ${host}:${httpPort} | SOCKS5 ${host}:${socksPort} — click to copy`
+          : `SOCKS5 ${host}:${socksPort} | HTTP ${host}:${httpPort} (Click to copy)`;
+      }
+      const lanHint = document.getElementById('lanShareHint');
+      if (lanHint) {
+        if (allowLan && lanIp) {
+          lanHint.textContent = `Phone HTTP ${lanIp}:${httpPort}`;
+        } else if (allowLan) {
+          lanHint.textContent = 'On — waiting for Wi-Fi IP…';
+        } else {
+          lanHint.textContent = 'Same Wi-Fi → phone Manual proxy';
+        }
       }
 
       if (swProxy) swProxy.checked = !!appStatus.system_proxy;
@@ -2942,14 +2961,23 @@
     }
 
     async function copyProxyEndpoint() {
-      // 0.0.0.0 is a bind address when LAN sharing is active; local clients connect via loopback.
-      const host = '127.0.0.1';
       const socksPort = appStatus.proxy_port || 10850;
       const httpPort = appStatus.http_port || (socksPort + 1);
-      const text = `SOCKS5: socks5://${host}:${socksPort}\nHTTP: http://${host}:${httpPort}`;
+      const allowLan = !!(appStatus.allow_lan || (appStatus.traffic && appStatus.traffic.allow_lan));
+      const lanIp = appStatus.lan_ip || '';
+      // Local apps use loopback; phones on the same Wi-Fi need the LAN IP.
+      const host = allowLan && lanIp ? lanIp : '127.0.0.1';
+      const text = allowLan && lanIp
+        ? `Phone Wi-Fi Manual proxy\nHost: ${lanIp}\nHTTP port: ${httpPort}\nSOCKS5: ${lanIp}:${socksPort}`
+        : `SOCKS5: socks5://${host}:${socksPort}\nHTTP: http://${host}:${httpPort}`;
       try {
         await copyToClipboard(text);
-        showToast(`Copied SOCKS5 (${socksPort}) & HTTP (${httpPort}) endpoints`, 'success');
+        showToast(
+          allowLan && lanIp
+            ? `Copied phone proxy ${lanIp}:${httpPort}`
+            : `Copied SOCKS5 (${socksPort}) & HTTP (${httpPort}) endpoints`,
+          'success'
+        );
       } catch (e) {
         showToast('Failed to copy endpoints: ' + e, 'error');
       }
@@ -3396,12 +3424,23 @@
           body: JSON.stringify({ enable })
         });
         const data = await res.json().catch(() => ({}));
+        await fetchStatus(true);
         if (res.ok && data.success !== false) {
-          showToast(`LAN Sharing ${enable ? 'Enabled (0.0.0.0)' : 'Disabled (127.0.0.1)'}`, 'info');
+          if (enable) {
+            const ip = (appStatus && appStatus.lan_ip) || data.lan_ip || '';
+            const httpPort = (appStatus && appStatus.http_port) || ((appStatus && appStatus.proxy_port) || 10850) + 1;
+            showToast(
+              ip
+                ? `LAN on — on phone set HTTP proxy ${ip}:${httpPort}`
+                : 'LAN on — use your PC Wi-Fi IP + HTTP port on the phone',
+              'info'
+            );
+          } else {
+            showToast('LAN Sharing disabled (localhost only)', 'info');
+          }
         } else {
           showToast(data.status_msg || data.error || 'Failed to update LAN Sharing', 'error');
         }
-        await fetchStatus(true);
       } catch (e) {
         showToast('LAN sharing error: ' + e, 'error');
         await fetchStatus(true);

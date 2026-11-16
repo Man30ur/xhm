@@ -64,6 +64,16 @@ SING_BOX_BIN = (
 SINGBOX_CONFIG_FILE = os.path.join(RUNTIME_DIR, "singbox.json")
 DEFAULT_PROXY_PORT = 10850
 
+# Shared live probes for connect / TUN / path-health (keep lists aligned).
+PROXY_LIVE_PROBE_URLS = (
+    "http://detectportal.firefox.com/success.txt",
+    "https://www.google.com/generate_204",
+    "https://connectivitycheck.gstatic.com/generate_204",
+    "https://cp.cloudflare.com/generate_204",
+)
+PATH_HEALTH_INTERVAL_SEC = 30.0
+PATH_HEALTH_FAIL_THRESHOLD = 3
+
 os.makedirs(XHM_DATA_DIR, exist_ok=True)
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
@@ -215,7 +225,7 @@ export NO_PROXY="{STANDARD_NO_PROXY}"
 
 
 def verify_http_proxy_live(http_port: int, timeout: float = 3.0) -> bool:
-    """Verify real HTTPS connectivity through a local HTTP proxy port."""
+    """Verify real HTTP(S) connectivity through a local HTTP proxy port."""
     if not http_port or not is_port_in_use(http_port):
         return False
     proxy_handler = urllib.request.ProxyHandler({
@@ -223,10 +233,7 @@ def verify_http_proxy_live(http_port: int, timeout: float = 3.0) -> bool:
         "https": f"http://127.0.0.1:{http_port}",
     })
     opener = urllib.request.build_opener(proxy_handler)
-    for url in (
-        "https://www.google.com/generate_204",
-        "https://cp.cloudflare.com/generate_204",
-    ):
+    for url in PROXY_LIVE_PROBE_URLS:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"})
             with opener.open(req, timeout=timeout) as resp:
@@ -674,6 +681,7 @@ def verify_tun_live(timeout: float = 3.0) -> bool:
     SO_BINDTODEVICE, which caused false negatives and automatic rollback.
     With auto_route, a plain HTTPS probe (proxy env cleared) exercises the
     system path through xhm-tun; fall back to the local proxy TUN forwards to.
+    Prefer IPv4 probes (-4) so Happy-Eyeballs IPv6 stalls do not false-fail.
     """
     if not is_tun_active():
         return False
@@ -690,14 +698,12 @@ def verify_tun_live(timeout: float = 3.0) -> bool:
             "ALL_PROXY",
         ):
             env.pop(key, None)
-        for url in (
-            "https://www.google.com/generate_204",
-            "https://cp.cloudflare.com/generate_204",
-        ):
+        for url in PROXY_LIVE_PROBE_URLS:
             try:
                 res = subprocess.run(
                     [
                         curl_bin,
+                        "-4",
                         "-fsS",
                         "--max-time",
                         str(timeout),
@@ -982,6 +988,13 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
         if not proxy_port:
             return False, "Connect to a server in XHM first before enabling TUN Mode."
 
+        http_port = int(proxy_port) + 1
+        if not verify_http_proxy_live(http_port, timeout=4.5):
+            return False, (
+                "Proxy tunnel is not responding (half-dead or blocked). "
+                "Reconnect or switch server, then enable TUN Mode."
+            )
+
         if is_tun_active():
             if verify_tun_live(timeout=3.0):
                 tag = (active_node or {}).get("tag", "active server")
@@ -1064,7 +1077,14 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
 
         if not verify_tun_live(timeout=4.5):
             _stop_xhm_tun()
-            return False, "xhm-tun failed live connectivity check and was rolled back to protect internet."
+            if not verify_http_proxy_live(http_port, timeout=3.0):
+                return False, (
+                    "Proxy tunnel stopped responding during TUN start. "
+                    "Reconnect or switch server, then try TUN Mode again."
+                )
+            return False, (
+                "xhm-tun came up but traffic check failed and was rolled back to protect internet."
+            )
 
         _wait_for_tun_dns(timeout=2.0)
 
@@ -3230,6 +3250,11 @@ class ProxyManager:
         self.prev_stat_down = 0
         self.prev_stat_up = 0
 
+        # Half-dead tunnel detection (process alive, data path stuck).
+        self._last_path_check = 0.0
+        self._path_fail_streak = 0
+        self._path_healthy = True
+
         self._check_existing()
 
     def _reset_local_state(self):
@@ -3251,6 +3276,9 @@ class ProxyManager:
         self.last_up = 0
         self.total_down = 0
         self.total_up = 0
+        self._last_path_check = 0.0
+        self._path_fail_streak = 0
+        self._path_healthy = True
 
     def reset_session_counters(self):
         """Synchronize in-memory counters after DB traffic stats are cleared."""
@@ -3520,27 +3548,48 @@ class ProxyManager:
 
     def verify_live_connectivity(self, timeout: float = 4.5) -> bool:
         """Verify real internet connectivity through the running proxy instance."""
-        http_p = self.proxy_port + 1
-        test_urls = [
-            "http://detectportal.firefox.com/success.txt",
-            "https://www.google.com/generate_204",
-            "https://connectivitycheck.gstatic.com/generate_204",
-            "https://cp.cloudflare.com/generate_204",
-        ]
-        proxy_handler = urllib.request.ProxyHandler({
-            "http": f"http://127.0.0.1:{http_p}",
-            "https": f"http://127.0.0.1:{http_p}",
-        })
-        opener = urllib.request.build_opener(proxy_handler)
-        for url in test_urls:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"})
-                with opener.open(req, timeout=timeout) as resp:
-                    if resp.status in (200, 204):
-                        return True
-            except Exception:
-                continue
-        return False
+        return verify_http_proxy_live(self.proxy_port + 1, timeout=timeout)
+
+    def _run_path_health_check(self):
+        """Detect half-dead tunnels (PID alive, HTTPS path stuck) and auto-reconnect."""
+        with self._lock:
+            if not self.connected or self._manual_stop or self._reconnecting:
+                return
+            now = time.time()
+            if (now - self._last_path_check) < PATH_HEALTH_INTERVAL_SEC:
+                return
+            self._last_path_check = now
+            http_port = int(self.proxy_port) + 1
+            node = self._hydrate_node(dict(self.active_node)) if self.active_node else None
+            tag = (node or {}).get("tag", "Proxy")
+
+        ok = verify_http_proxy_live(http_port, timeout=3.0)
+
+        with self._lock:
+            if not self.connected or self._manual_stop or self._reconnecting:
+                return
+            if ok:
+                was_unhealthy = (not self._path_healthy) or self._path_fail_streak > 0
+                self._path_fail_streak = 0
+                self._path_healthy = True
+                if was_unhealthy:
+                    self.status_msg = f"🟢 Connected to {tag} (Verified Live)"
+                    self._append_log(f"Proxy path health restored for {tag}")
+                return
+
+            self._path_fail_streak += 1
+            self._path_healthy = False
+            self.status_msg = f"⚠️ Connected to {tag} (Path Unhealthy — reconnecting soon)"
+            self._append_log(
+                f"Proxy path health check failed for {tag} "
+                f"(streak={self._path_fail_streak}/{PATH_HEALTH_FAIL_THRESHOLD})"
+            )
+            if self._path_fail_streak < PATH_HEALTH_FAIL_THRESHOLD or not node:
+                return
+            was_tun = is_tun_active() or os.path.exists(TUN_MANAGED_FILE)
+            reason = "Proxy path became unresponsive (half-dead tunnel)."
+            self.stop(silent=True, unexpected=True)
+            self._trigger_auto_reconnect(node, reason, restore_tun=was_tun)
 
     def _validate_node_before_stop(self, node: dict) -> Tuple[bool, Optional[dict], str]:
         """Validate binaries and generated config BEFORE stopping an existing active tunnel.
@@ -3816,6 +3865,8 @@ class ProxyManager:
                 is_live = self.verify_live_connectivity(timeout=4.5)
                 self._reconnecting = False
                 self._on_started(node, system_proxy=True)
+                self._path_healthy = bool(is_live)
+                self._path_fail_streak = 0 if is_live else 1
                 tun_suffix = ""
                 if was_tun_active:
                     ok_tun, tun_msg = set_tun_mode_detailed(True, manager=self)
@@ -3887,6 +3938,9 @@ class ProxyManager:
         self.session_up = 0
         self.prev_stat_down = 0
         self.prev_stat_up = 0
+        self._last_path_check = time.time()
+        self._path_fail_streak = 0
+        self._path_healthy = True
         self.current_session_id = TrafficTracker.start_session(node)
         self.status_msg = f"🟢 Connected to {node['tag']}"
 
@@ -3949,6 +4003,7 @@ class ProxyManager:
 
     def query_traffic_stats(self) -> dict:
         """Query real-time transfer speeds and total consumed bandwidth."""
+        need_path_check = False
         acquired = self._lock.acquire(timeout=0.05)
         if not acquired:
             return {
@@ -3961,6 +4016,7 @@ class ProxyManager:
                 "up_bytes": self.session_up,
                 "session_id": self.current_session_id,
                 "allow_lan": self.allow_lan,
+                "path_healthy": bool(getattr(self, "_path_healthy", True)),
             }
 
         try:
@@ -3978,6 +4034,7 @@ class ProxyManager:
                     "up_bytes": self.session_up,
                     "session_id": self.current_session_id,
                     "allow_lan": self.allow_lan,
+                    "path_healthy": bool(getattr(self, "_path_healthy", True)),
                 }
 
             now = time.time()
@@ -4006,6 +4063,13 @@ class ProxyManager:
                 else:
                     self.status_msg = f"❌ {reason}"
 
+            need_path_check = (
+                self.connected
+                and (not self._manual_stop)
+                and (not self._reconnecting)
+                and ((now - self._last_path_check) >= PATH_HEALTH_INTERVAL_SEC)
+            )
+
             if self.connected:
                 down, up = self._record_live_counters()
 
@@ -4024,6 +4088,12 @@ class ProxyManager:
         finally:
             self._lock.release()
 
+        if need_path_check:
+            try:
+                self._run_path_health_check()
+            except Exception:
+                pass
+
         return {
             "down_speed_fmt": format_speed(self.down_speed),
             "up_speed_fmt": format_speed(self.up_speed),
@@ -4034,6 +4104,7 @@ class ProxyManager:
             "up_bytes": self.session_up,
             "session_id": self.current_session_id,
             "allow_lan": self.allow_lan,
+            "path_healthy": bool(getattr(self, "_path_healthy", True)),
         }
 
     def stop(self, silent: bool = False, unexpected: bool = False):

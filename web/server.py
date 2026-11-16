@@ -146,6 +146,7 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                 "active_node": safe_active,
                 "core": manager.core_name or "Xray Core",
                 "proxy_port": manager.proxy_port,
+                "http_port": int(manager.proxy_port) + 1,
                 "system_proxy": xhm_core.get_gnome_proxy_state(),
                 "tun_mode": xhm_core.is_tun_active(),
                 "tun_supported": xhm_core.is_tun_supported(),
@@ -153,6 +154,9 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                 "status_msg": manager.status_msg,
                 "traffic": traffic,
                 "allow_lan": manager.allow_lan,
+                # Real Wi-Fi/LAN address phones must use (0.0.0.0 is bind-only).
+                "lan_ip": xhm_core.get_physical_interface_ip(),
+                "path_healthy": bool(getattr(manager, "_path_healthy", True)),
             }
             self.send_json(data, send_body=send_body)
             return
@@ -371,7 +375,13 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                 manager.allow_lan = enable
                 if manager.connected and manager.active_node:
                     manager.start(manager.active_node)
-            self.send_json({"success": True, "allow_lan": manager.allow_lan})
+            self.send_json({
+                "success": True,
+                "allow_lan": manager.allow_lan,
+                "lan_ip": xhm_core.get_physical_interface_ip(),
+                "proxy_port": manager.proxy_port,
+                "http_port": int(manager.proxy_port) + 1,
+            })
             return
 
         elif parsed_path == "/api/terminal-proxy-command":
