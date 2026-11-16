@@ -554,6 +554,7 @@ class TestConfigBuildersAndCoreSchemas(_IsolatedXhmTestCase):
                 for rule in cfg["routing"]["rules"]:
                     self.assertNotEqual(str(rule.get("port", "")), "53")
                 self.assertEqual(cfg["dns"]["servers"][0]["domains"], ["domain:.ir", "localhost"])
+                self.assertIn("0", cfg["policy"]["levels"])
                 for ib in cfg["inbounds"]:
                     if ib["tag"] in ("mixed", "http-in"):
                         self.assertTrue(ib["sniffing"]["enabled"])
@@ -569,6 +570,26 @@ class TestConfigBuildersAndCoreSchemas(_IsolatedXhmTestCase):
                         timeout=10,
                     )
                     self.assertEqual(res.returncode, 0, f"xray -test failed for {link}: {res.stdout}\n{res.stderr}")
+
+            ssh_ob = {
+                "protocol": "socks",
+                "tag": "ssh-tunnel",
+                "settings": {"servers": [{"address": "127.0.0.1", "port": 10855}]},
+            }
+            ssh_cfg = xhm_core.build_xray_config(ssh_ob, proxy_port=39850, api_port=39852, allow_lan=True)
+            self.assertEqual(ssh_cfg["policy"]["levels"]["0"]["connIdle"], 60)
+            self.assertEqual(ssh_cfg["inbounds"][0]["listen"], "0.0.0.0")
+            if os.path.exists(xhm_core.XRAY_BIN):
+                ssh_path = os.path.join(self._tmpdir.name, "xray_ssh_lan.json")
+                with open(ssh_path, "w", encoding="utf-8") as f:
+                    json.dump(ssh_cfg, f)
+                ssh_res = subprocess.run(
+                    [xhm_core.XRAY_BIN, "run", "-test", "-c", ssh_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(ssh_res.returncode, 0, f"xray -test failed for ssh+lan: {ssh_res.stdout}\n{ssh_res.stderr}")
 
     def test_build_singbox_run_and_tun_configs_valid_schema(self):
         with mock.patch("xhm_core.get_physical_interface", return_value=("192.0.2.10", None)), \
@@ -899,6 +920,29 @@ class TestProxyManagerLifecycle(_IsolatedXhmTestCase):
         self.assertTrue(mgr._path_healthy)
         self.assertEqual(mgr._path_fail_streak, 0)
         self.assertIn("Verified Live", mgr.status_msg)
+
+    def test_path_health_skips_reconnect_under_lan_when_cores_alive(self):
+        mgr = self._make_manager()
+        node = _wrap_node("ssh://u:p@ssh.example.com:22#SSH1")
+        mgr.connected = True
+        mgr.allow_lan = True
+        mgr.active_node = node
+        mgr.proc = _FakePopenProc(alive=True)
+        mgr.aux_proc = _FakePopenProc(alive=True)
+        mgr._last_path_check = 0.0
+        mgr._path_fail_streak = xhm_core.PATH_HEALTH_FAIL_THRESHOLD_LAN - 1
+        mgr._path_healthy = False
+
+        with mock.patch("xhm_core.verify_http_proxy_live", return_value=False), \
+             mock.patch("xhm_core.is_tun_active", return_value=False), \
+             mock.patch.object(mgr, "stop") as mock_stop, \
+             mock.patch.object(mgr, "_trigger_auto_reconnect") as mock_reconn, \
+             mock.patch.object(mgr, "_append_log") as mock_log:
+            mgr._run_path_health_check()
+
+        mock_stop.assert_not_called()
+        mock_reconn.assert_not_called()
+        self.assertTrue(any("Skipping path-health reconnect" in str(c) for c in mock_log.call_args_list))
 
 
 class TestWebServerApi(_IsolatedXhmTestCase):

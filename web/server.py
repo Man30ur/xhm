@@ -372,15 +372,21 @@ class XhmApiHandler(BaseHTTPRequestHandler):
         elif parsed_path == "/api/toggle-lan":
             enable = bool(req_data.get("enable"))
             with manager_lock:
+                changed = bool(manager.allow_lan) != bool(enable)
                 manager.allow_lan = enable
-                if manager.connected and manager.active_node:
+                # Only rebuild listen address when the flag actually flips — a no-op
+                # restart would drop every LAN client and the live SSH tunnel.
+                if changed and manager.connected and manager.active_node:
                     manager.start(manager.active_node)
+            core = (manager.core_name or "").lower()
             self.send_json({
                 "success": True,
                 "allow_lan": manager.allow_lan,
                 "lan_ip": xhm_core.get_physical_interface_ip(),
                 "proxy_port": manager.proxy_port,
                 "http_port": int(manager.proxy_port) + 1,
+                "core": manager.core_name or "",
+                "ssh_single_user_warn": ("ssh" in core),
             })
             return
 

@@ -2930,12 +2930,17 @@
       }
       const lanHint = document.getElementById('lanShareHint');
       if (lanHint) {
+        const isSsh = String(appStatus.core || '').toLowerCase().includes('ssh');
         if (allowLan && lanIp) {
-          lanHint.textContent = `Phone HTTP ${lanIp}:${httpPort}`;
+          lanHint.textContent = isSsh
+            ? `Phone HTTP ${lanIp}:${httpPort} · SSH 1-user limit`
+            : `Phone HTTP ${lanIp}:${httpPort}`;
         } else if (allowLan) {
           lanHint.textContent = 'On — waiting for Wi-Fi IP…';
         } else {
-          lanHint.textContent = 'Same Wi-Fi → phone Manual proxy';
+          lanHint.textContent = isSsh
+            ? 'Same Wi-Fi proxy · SSH may be 1-user'
+            : 'Same Wi-Fi → phone Manual proxy';
         }
       }
 
@@ -3429,11 +3434,12 @@
           if (enable) {
             const ip = (appStatus && appStatus.lan_ip) || data.lan_ip || '';
             const httpPort = (appStatus && appStatus.http_port) || ((appStatus && appStatus.proxy_port) || 10850) + 1;
+            const sshWarn = !!(data.ssh_single_user_warn || ((appStatus && appStatus.core) || '').toLowerCase().includes('ssh'));
             showToast(
               ip
-                ? `LAN on — on phone set HTTP proxy ${ip}:${httpPort}`
+                ? `LAN on — phone HTTP ${ip}:${httpPort}${sshWarn ? ' (SSH accounts with Concurrent users:1 may kick multi-device)' : ''}`
                 : 'LAN on — use your PC Wi-Fi IP + HTTP port on the phone',
-              'info'
+              sshWarn ? 'error' : 'info'
             );
           } else {
             showToast('LAN Sharing disabled (localhost only)', 'info');

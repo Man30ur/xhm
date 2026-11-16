@@ -27,6 +27,7 @@ import hashlib
 import threading
 import ipaddress
 import tempfile
+import resource
 from typing import Optional, List, Dict, Tuple
 
 # --- Paths & Constants ---
@@ -73,12 +74,31 @@ PROXY_LIVE_PROBE_URLS = (
 )
 PATH_HEALTH_INTERVAL_SEC = 30.0
 PATH_HEALTH_FAIL_THRESHOLD = 3
+# LAN Sharing fans out many phone sockets into one SSH -D tunnel; be less trigger-happy.
+PATH_HEALTH_INTERVAL_LAN_SEC = 60.0
+PATH_HEALTH_FAIL_THRESHOLD_LAN = 6
+CHILD_NOFILE_SOFT = 65536
+CHILD_NOFILE_HARD = 65536
 
 os.makedirs(XHM_DATA_DIR, exist_ok=True)
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 
 # --- Helper Utilities ---
+def _raise_child_nofile_limit() -> None:
+    """Raise RLIMIT_NOFILE in forked children (ssh -D opens one FD per SOCKS channel)."""
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        want_soft = max(soft, CHILD_NOFILE_SOFT)
+        want_hard = max(hard, CHILD_NOFILE_HARD) if hard > 0 else CHILD_NOFILE_HARD
+        # Soft cannot exceed hard on Linux.
+        want_soft = min(want_soft, want_hard) if want_hard > 0 else want_soft
+        if want_soft > soft or (hard > 0 and want_hard > hard):
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want_soft, want_hard if want_hard > 0 else want_soft))
+    except Exception:
+        pass
+
+
 def is_port_in_use(port: int) -> bool:
     """Check if local TCP port is already open/listening."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -1026,6 +1046,7 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
                     start_new_session=True,
+                    preexec_fn=_raise_child_nofile_limit,
                 )
             with open(pid_path, "w", encoding="utf-8") as f:
                 f.write(str(proc.pid))
@@ -2614,7 +2635,18 @@ def build_xray_config(outbound: dict, proxy_port: int, api_port: int, allow_lan:
             "services": ["StatsService"],
         },
         "stats": {},
+        # Short idle timeouts recycle sockets so LAN phones cannot pile hundreds of
+        # half-open channels into a single SSH -D tunnel until the aux process dies.
         "policy": {
+            "levels": {
+                "0": {
+                    "handshake": 8 if (is_ssh or allow_lan) else 4,
+                    "connIdle": 60 if (is_ssh or allow_lan) else 300,
+                    "uplinkOnly": 2,
+                    "downlinkOnly": 5,
+                    "bufferSize": 4,
+                }
+            },
             "system": {
                 "statsInboundUplink": True,
                 "statsInboundDownlink": True,
@@ -3556,14 +3588,19 @@ class ProxyManager:
             if not self.connected or self._manual_stop or self._reconnecting:
                 return
             now = time.time()
-            if (now - self._last_path_check) < PATH_HEALTH_INTERVAL_SEC:
+            lan_busy = bool(self.allow_lan)
+            interval = PATH_HEALTH_INTERVAL_LAN_SEC if lan_busy else PATH_HEALTH_INTERVAL_SEC
+            fail_threshold = PATH_HEALTH_FAIL_THRESHOLD_LAN if lan_busy else PATH_HEALTH_FAIL_THRESHOLD
+            if (now - self._last_path_check) < interval:
                 return
             self._last_path_check = now
             http_port = int(self.proxy_port) + 1
             node = self._hydrate_node(dict(self.active_node)) if self.active_node else None
             tag = (node or {}).get("tag", "Proxy")
+            # Under LAN load, SSH channels stall; probing longer avoids false reconnects.
+            probe_timeout = 6.0 if lan_busy else 3.0
 
-        ok = verify_http_proxy_live(http_port, timeout=3.0)
+        ok = verify_http_proxy_live(http_port, timeout=probe_timeout)
 
         with self._lock:
             if not self.connected or self._manual_stop or self._reconnecting:
@@ -3582,9 +3619,28 @@ class ProxyManager:
             self.status_msg = f"⚠️ Connected to {tag} (Path Unhealthy — reconnecting soon)"
             self._append_log(
                 f"Proxy path health check failed for {tag} "
-                f"(streak={self._path_fail_streak}/{PATH_HEALTH_FAIL_THRESHOLD})"
+                f"(streak={self._path_fail_streak}/{fail_threshold}"
+                f"{', lan' if lan_busy else ''})"
             )
-            if self._path_fail_streak < PATH_HEALTH_FAIL_THRESHOLD or not node:
+            if self._path_fail_streak < fail_threshold or not node:
+                return
+            # If the SSH aux PID is still alive under LAN load, congestion ≠ dead tunnel.
+            # Killing + reconnecting drops every device (and can trip Concurrent users: 1).
+            aux_alive = (
+                (self.aux_proc is not None and self.aux_proc.poll() is None)
+                or (self._adopted_aux_pid and self._is_pid_alive(self._adopted_aux_pid))
+            )
+            core_alive = (
+                (self.proc is not None and self.proc.poll() is None)
+                or (self._adopted_pid and self._is_pid_alive(self._adopted_pid))
+            )
+            if lan_busy and aux_alive and core_alive:
+                self._append_log(
+                    f"Skipping path-health reconnect for {tag}: cores still alive under LAN load "
+                    f"(streak={self._path_fail_streak})"
+                )
+                # Decay streak so we keep warning without flapping a full restart.
+                self._path_fail_streak = max(fail_threshold - 1, 1)
                 return
             was_tun = is_tun_active() or os.path.exists(TUN_MANAGED_FILE)
             reason = "Proxy path became unresponsive (half-dead tunnel)."
@@ -3775,6 +3831,7 @@ class ProxyManager:
                         stdin=subprocess.DEVNULL,
                         env=popen_env,
                         start_new_session=True,
+                        preexec_fn=_raise_child_nofile_limit,
                     )
 
                 aux_ready = False
@@ -3805,6 +3862,7 @@ class ProxyManager:
                         stderr=subprocess.STDOUT,
                         stdin=subprocess.DEVNULL,
                         start_new_session=True,
+                        preexec_fn=_raise_child_nofile_limit,
                     )
                 self.core_name = "SSH + Xray"
 
@@ -3820,6 +3878,7 @@ class ProxyManager:
                             stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL,
                             start_new_session=True,
+                            preexec_fn=_raise_child_nofile_limit,
                         )
                     self.core_name = "Sing-box"
                 except Exception as e:
@@ -3838,6 +3897,7 @@ class ProxyManager:
                             stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL,
                             start_new_session=True,
+                            preexec_fn=_raise_child_nofile_limit,
                         )
                     self.core_name = "Xray"
                 except Exception as e:
@@ -4063,11 +4123,12 @@ class ProxyManager:
                 else:
                     self.status_msg = f"❌ {reason}"
 
+            health_interval = PATH_HEALTH_INTERVAL_LAN_SEC if self.allow_lan else PATH_HEALTH_INTERVAL_SEC
             need_path_check = (
                 self.connected
                 and (not self._manual_stop)
                 and (not self._reconnecting)
-                and ((now - self._last_path_check) >= PATH_HEALTH_INTERVAL_SEC)
+                and ((now - self._last_path_check) >= health_interval)
             )
 
             if self.connected:
