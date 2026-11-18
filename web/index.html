@@ -1245,21 +1245,34 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 14px;
+      padding: 12px;
       background: #ffffff;
       border-radius: 14px;
       width: 240px;
       height: 240px;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
       flex-shrink: 0;
+      overflow: hidden;
     }
     .inspector-qr-wrap canvas,
     .inspector-qr-wrap img {
-      width: 212px !important;
-      height: 212px !important;
-      display: block !important;
+      width: 100%;
+      height: 100%;
+      max-width: 216px;
+      max-height: 216px;
+      object-fit: contain;
+      display: block;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+    }
+    .insp-qr-note {
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--accent-amber-text);
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      border-radius: 8px;
+      padding: 7px 10px;
     }
     .inspector-meta-col {
       flex: 1;
@@ -2340,9 +2353,9 @@
   <div class="modal-overlay" id="inspectorModal" role="dialog" aria-modal="true" aria-labelledby="inspTitle">
     <div class="modal-box" style="width: 660px; max-height: 88vh; overflow-y: auto;">
       <div class="modal-header">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span class="proto-badge" id="inspProtoBadge">VLESS</span>
-          <h3 class="modal-title" id="inspTitle">Node Inspector</h3>
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;">
+          <span class="proto-badge" id="inspProtoBadge" style="flex-shrink: 0;">VLESS</span>
+          <h3 class="modal-title" id="inspTitle" style="min-width: 0; overflow-wrap: anywhere;">Node Inspector</h3>
         </div>
         <button type="button" class="modal-close" aria-label="Close modal" onclick="closeInspectorModal()">&times;</button>
       </div>
@@ -2352,7 +2365,7 @@
           <!-- QRCode canvas/img injected here -->
         </div>
         <div class="inspector-meta-col">
-          <div style="font-size: 15px; font-weight: 700; color: var(--text-main);" id="inspTag" dir="auto">Server Tag</div>
+          <div style="font-size: 15px; font-weight: 700; color: var(--text-main); overflow-wrap: anywhere;" id="inspTag" dir="auto">Server Tag</div>
           <div style="font-size: 12px; color: var(--text-muted); font-family: monospace;" id="inspEndpoint">1.2.3.4:443</div>
           <div style="font-size: 11px; color: var(--text-dim);" id="inspProfile">Profile: Custom</div>
 
@@ -2366,6 +2379,8 @@
               <span>Save QR</span>
             </button>
           </div>
+
+          <div class="insp-qr-note" id="inspQrNote" style="display: none;"></div>
 
           <!-- Recommended Client Apps Section -->
           <div class="insp-apps-card" id="inspAppsCard">
@@ -3213,13 +3228,54 @@
 
     function getSafeQrText(str) {
       if (!str) return '';
-      const idx = str.indexOf('#');
-      if (idx === -1) return str;
-      try {
-        return str.slice(0, idx + 1) + encodeURI(decodeURI(str.slice(idx + 1)));
-      } catch (_) {
-        return str;
+      // Percent-encode non-ASCII runs (e.g. Persian/emoji tags) so qrcodejs uses pure ASCII byte length safely
+      return String(str).replace(/[^\x00-\x7F]+/g, (chunk) => {
+        try {
+          return encodeURIComponent(chunk);
+        } catch (_) {
+          return '';
+        }
+      });
+    }
+
+    function renderCrispQrCanvas(container, text) {
+      const scratch = document.createElement('div');
+      const qr = new QRCode(scratch, {
+        text: text,
+        width: 128,
+        height: 128,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.L
+      });
+      const matrix = qr && qr._oQRCode;
+      if (!matrix || typeof matrix.getModuleCount !== 'function') {
+        throw new Error('QR matrix unavailable');
       }
+      const count = matrix.getModuleCount();
+      const quietZone = 3;
+      const totalModules = count + quietZone * 2;
+      const scale = Math.max(2, Math.floor(320 / totalModules));
+      const size = totalModules * scale;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      canvas.setAttribute('aria-label', 'Proxy configuration QR code');
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#000000';
+      for (let r = 0; r < count; r++) {
+        for (let c = 0; c < count; c++) {
+          if (matrix.isDark(r, c)) {
+            ctx.fillRect((c + quietZone) * scale, (r + quietZone) * scale, scale, scale);
+          }
+        }
+      }
+      container.innerHTML = '';
+      container.appendChild(canvas);
+      return qr;
     }
 
     function buildTrafficPillInner(usage) {
@@ -3733,25 +3789,32 @@
       // Generate QR Code and toggle Save QR button state
       const qrBox = document.getElementById('inspQrBox');
       const btnDownloadQr = document.getElementById('btnDownloadQr');
+      const qrNoteEl = document.getElementById('inspQrNote');
       qrBox.innerHTML = '';
       let qrReady = false;
-      if (typeof QRCode !== 'undefined' && link) {
+      const qrText = getSafeQrText(link);
+      if (typeof QRCode !== 'undefined' && qrText) {
         try {
-          const qrText = getSafeQrText(link);
-          qrCodeInstance = new QRCode(qrBox, {
-            text: qrText,
-            width: 260,
-            height: 260,
-            colorDark: "#000000",
-            colorLight: "#ffffff",
-            correctLevel: QRCode.CorrectLevel.L
-          });
+          qrCodeInstance = renderCrispQrCanvas(qrBox, qrText);
           qrReady = true;
         } catch (e) {
-          qrBox.innerHTML = '<span style="font-size:11px; color:#be123c; font-weight:600; text-align:center;">QR render failed</span>';
+          qrBox.innerHTML = '<span style="font-size:11px; color:#be123c; font-weight:600; text-align:center; padding:8px;">QR unavailable for this link</span>';
         }
       } else {
         qrBox.innerHTML = '<span style="font-size:11px; color:#475569; font-weight:600; text-align:center;">No QR available</span>';
+      }
+      if (qrNoteEl) {
+        const lowerLink = String(link || '').toLowerCase();
+        if (lowerLink.startsWith('npvt-ssh://') || lowerLink.startsWith('ssh://')) {
+          qrNoteEl.textContent = 'SSH / npvt-ssh QR is only supported by compatible clients (NapsternetV / NPV Tunnel), not v2rayNG or Shadowrocket.';
+          qrNoteEl.style.display = 'block';
+        } else if (qrText.length > 480) {
+          qrNoteEl.textContent = `Dense QR (${qrText.length} chars). If camera scan is slow, use Copy Link.`;
+          qrNoteEl.style.display = 'block';
+        } else {
+          qrNoteEl.style.display = 'none';
+          qrNoteEl.textContent = '';
+        }
       }
       if (btnDownloadQr) {
         btnDownloadQr.disabled = !qrReady;
