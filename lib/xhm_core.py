@@ -131,8 +131,8 @@ def format_speed(bps: float) -> str:
     return f"{format_bytes(int(bps))}/s"
 
 
-def get_gnome_proxy_state() -> bool:
-    """Check if GNOME system proxy mode is set to manual."""
+def get_gnome_proxy_state(proxy_port: Optional[int] = None) -> bool:
+    """Check if GNOME system proxy is active (optionally scoped to XHM's own proxy ports)."""
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.system.proxy", "mode"],
@@ -140,9 +140,41 @@ def get_gnome_proxy_state() -> bool:
             text=True,
             timeout=1,
         )
-        return "manual" in res.stdout
+        if "manual" not in res.stdout:
+            return False
+        if proxy_port is None:
+            return True
+        curr = get_current_gnome_proxy()
+        own_ports = {str(int(proxy_port)), str(int(proxy_port) + 1)}
+        curr_ports = {
+            str(curr.get("http_port") or ""),
+            str(curr.get("https_port") or ""),
+            str(curr.get("socks_port") or ""),
+        }
+        return bool(curr_ports & own_ports)
     except Exception:
         return False
+
+
+def get_external_gnome_proxy_desc(proxy_port: Optional[int] = None) -> str:
+    """Return 'host:port' if GNOME manual proxy points to a non-XHM proxy, else empty string."""
+    try:
+        curr = get_current_gnome_proxy()
+        if curr.get("mode") != "manual":
+            return ""
+        own_ports = (
+            {str(int(proxy_port)), str(int(proxy_port) + 1)}
+            if proxy_port is not None
+            else {str(DEFAULT_PROXY_PORT), str(DEFAULT_PROXY_PORT + 1)}
+        )
+        for h_key, p_key in (("http_host", "http_port"), ("https_host", "https_port"), ("socks_host", "socks_port")):
+            p_val = str(_parse_positive_port(curr.get(p_key)))
+            if p_val != "0" and p_val not in own_ports:
+                h_val = curr.get(h_key) or "127.0.0.1"
+                return f"{h_val}:{p_val}"
+    except Exception:
+        pass
+    return ""
 
 
 STANDARD_NO_PROXY = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*.local"
@@ -276,9 +308,8 @@ def set_gnome_proxy(enable: bool, port: int = DEFAULT_PROXY_PORT, http_port: Opt
     """Enable or disable GNOME desktop system proxy with full standard bypasses and state restoration."""
     h_port = http_port if http_port is not None else port
     try:
-        subprocess.run(["gsettings", "set", "org.gnome.system.proxy", "ignore-hosts", STANDARD_IGNORE_HOSTS], check=False)
-
         if enable:
+            subprocess.run(["gsettings", "set", "org.gnome.system.proxy", "ignore-hosts", STANDARD_IGNORE_HOSTS], check=False)
             current = get_current_gnome_proxy()
             if current.get("mode") == "manual":
                 curr_h_port = _parse_positive_port(current.get("http_port"))
@@ -742,8 +773,9 @@ def verify_tun_live(timeout: float = 3.0) -> bool:
                     return True
             except Exception:
                 continue
+        return False
 
-    # Fallback: interface is up and the SOCKS/HTTP core TUN detours to is live.
+    # Fallback only when curl is unavailable on the host.
     proxy_port, _ = _find_active_proxy_context()
     http_port = int(proxy_port or DEFAULT_PROXY_PORT) + 1
     if verify_http_proxy_live(http_port, timeout=timeout):
@@ -935,8 +967,16 @@ def _run_privileged(cmd_args: List[str], timeout: int = 45) -> subprocess.Comple
     raise RuntimeError("Neither pkexec nor sudo is available for TUN privileges.")
 
 
+def _tun_managed_paths() -> List[str]:
+    return [TUN_MANAGED_FILE, f"{TUN_MANAGED_FILE}.{os.getuid()}"]
+
+
+def _is_tun_managed() -> bool:
+    return any(os.path.exists(p) for p in _tun_managed_paths())
+
+
 def _cleanup_tun_runtime_files():
-    for path in (*_tun_pid_paths(), TUN_MANAGED_FILE):
+    for path in (*_tun_pid_paths(), *_tun_managed_paths()):
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -1022,13 +1062,14 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
             _stop_xhm_tun()
 
         tun_cfg = build_singbox_tun_config(proxy_port, active_node=active_node)
-        with open(TUN_CONFIG_FILE, "w", encoding="utf-8") as f:
+        tun_cfg_path = _ensure_user_writable_file(TUN_CONFIG_FILE)
+        with open(tun_cfg_path, "w", encoding="utf-8") as f:
             json.dump(tun_cfg, f, indent=2, ensure_ascii=False)
 
-        chk = subprocess.run([SING_BOX_BIN, "check", "-c", TUN_CONFIG_FILE], capture_output=True, text=True, timeout=5)
+        chk = subprocess.run([SING_BOX_BIN, "check", "-c", tun_cfg_path], capture_output=True, text=True, timeout=5)
         if chk.returncode != 0:
             err_msg = (chk.stderr or chk.stdout or "Invalid TUN config").strip()
-            return False, f"TUN config error: {err_msg[:120]}"
+            return False, f"TUN config error (ensure sing-box >= 1.12): {err_msg[:120]}"
 
         legacy_active = is_legacy_xray_tun_active()
         has_caps = _singbox_has_tun_caps(SING_BOX_BIN)
@@ -1041,7 +1082,7 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
             pid_path = _ensure_user_writable_file(TUN_PID_FILE)
             with open(log_path, "a", encoding="utf-8") as log_fp:
                 proc = subprocess.Popen(
-                    [SING_BOX_BIN, "run", "-c", TUN_CONFIG_FILE],
+                    [SING_BOX_BIN, "run", "-c", tun_cfg_path],
                     stdout=log_fp,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
@@ -1070,7 +1111,7 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
                 TUN_HELPER_BIN,
                 "start",
                 SING_BOX_BIN,
-                TUN_CONFIG_FILE,
+                tun_cfg_path,
                 TUN_PID_FILE,
                 TUN_LOG_FILE,
                 "--iface",
@@ -1110,7 +1151,8 @@ def set_tun_mode_detailed(enable: bool, manager=None) -> Tuple[bool, str]:
         _wait_for_tun_dns(timeout=2.0)
 
         os.makedirs(RUNTIME_DIR, exist_ok=True)
-        with open(TUN_MANAGED_FILE, "w", encoding="utf-8") as f:
+        managed_path = _ensure_user_writable_file(TUN_MANAGED_FILE)
+        with open(managed_path, "w", encoding="utf-8") as f:
             f.write(str(time.time()))
         tag = (active_node or {}).get("tag", "active server")
         return True, f"Full System TUN Mode Enabled (via {tag})"
@@ -2391,18 +2433,26 @@ def singbox_to_xray_outbound(sb: dict) -> dict:
         elif tr_type in ("http", "h2"):
             host_val = transport.get("host", "")
             hosts = host_val if isinstance(host_val, list) else ([host_val] if host_val else [])
-            outbound["streamSettings"]["network"] = "tcp" if tr_type == "http" else "xhttp"
-            outbound["streamSettings"]["tcpSettings"] = {
-                "header": {
-                    "type": "http",
-                    "request": {
-                        "version": "1.1",
-                        "method": transport.get("method", "GET"),
-                        "path": [transport.get("path", "/")],
-                        "headers": {"Host": hosts} if hosts else {},
-                    },
+            if tr_type == "h2":
+                outbound["streamSettings"]["network"] = "xhttp"
+                outbound["streamSettings"]["xhttpSettings"] = {
+                    "mode": transport.get("mode", "auto"),
+                    "host": hosts[0] if hosts else "",
+                    "path": transport.get("path", "/"),
                 }
-            }
+            else:
+                outbound["streamSettings"]["network"] = "tcp"
+                outbound["streamSettings"]["tcpSettings"] = {
+                    "header": {
+                        "type": "http",
+                        "request": {
+                            "version": "1.1",
+                            "method": transport.get("method", "GET"),
+                            "path": [transport.get("path", "/")],
+                            "headers": {"Host": hosts} if hosts else {},
+                        },
+                    }
+                }
         elif tr_type == "tcp" and transport.get("header_type") == "http":
             host_hdr = (transport.get("headers") or {}).get("Host", "") or transport.get("host", "")
             outbound["streamSettings"]["network"] = "tcp"
@@ -3260,6 +3310,7 @@ class ProxyManager:
         self.core_name = "None"
         self.status_msg = ""
         self.allow_lan = False
+        self.tun_armed = False
 
         self._lock = threading.RLock()
         self._manual_stop = False
@@ -3286,6 +3337,7 @@ class ProxyManager:
         self._last_path_check = 0.0
         self._path_fail_streak = 0
         self._path_healthy = True
+        self._path_check_running = False
 
         self._check_existing()
 
@@ -3446,6 +3498,7 @@ class ProxyManager:
                 self.core_name = state.get("core", "active")
                 self.allow_lan = state.get("allow_lan", False)
                 self.current_session_id = state.get("session_id")
+                self._last_path_check = time.time()
                 tag = self.active_node.get("tag", "proxy") if self.active_node else "proxy"
                 self.status_msg = f"Connected to {tag}"
 
@@ -3635,6 +3688,7 @@ class ProxyManager:
                 or (self._adopted_pid and self._is_pid_alive(self._adopted_pid))
             )
             if lan_busy and aux_alive and core_alive:
+                self.status_msg = f"⚠️ Connected to {tag} (High LAN load — probe slow)"
                 self._append_log(
                     f"Skipping path-health reconnect for {tag}: cores still alive under LAN load "
                     f"(streak={self._path_fail_streak})"
@@ -3642,7 +3696,7 @@ class ProxyManager:
                 # Decay streak so we keep warning without flapping a full restart.
                 self._path_fail_streak = max(fail_threshold - 1, 1)
                 return
-            was_tun = is_tun_active() or os.path.exists(TUN_MANAGED_FILE)
+            was_tun = is_tun_active() or _is_tun_managed()
             reason = "Proxy path became unresponsive (half-dead tunnel)."
             self.stop(silent=True, unexpected=True)
             self._trigger_auto_reconnect(node, reason, restore_tun=was_tun)
@@ -3756,11 +3810,23 @@ class ProxyManager:
             was_tun_active = (
                 _restore_tun
                 if _restore_tun is not None
-                else (is_tun_active() or os.path.exists(TUN_MANAGED_FILE))
+                else (is_tun_active() or _is_tun_managed() or bool(getattr(self, "tun_armed", False)))
             )
+            was_connected = bool(self.connected)
+            want_sys_proxy = True
+            if was_connected:
+                if os.path.exists(STATE_FILE):
+                    try:
+                        with open(STATE_FILE, "r", encoding="utf-8") as f:
+                            st = json.load(f)
+                        want_sys_proxy = bool(st.get("system_proxy", True))
+                    except Exception:
+                        want_sys_proxy = get_gnome_proxy_state(self.proxy_port)
+                else:
+                    want_sys_proxy = get_gnome_proxy_state(self.proxy_port)
 
             self._manual_stop = False
-            self.stop(silent=True, unexpected=True)
+            self.stop(silent=True, unexpected=True, _preserve_system_proxy=was_connected)
             self._kill_stale_processes()
             os.makedirs(RUNTIME_DIR, exist_ok=True)
 
@@ -3850,6 +3916,8 @@ class ProxyManager:
                     self._append_log(f"SSH tunnel failed to establish SOCKS5 on :{internal_socks_port}")
                     self.status_msg = "❌ SSH connection failed (check server address or credentials)."
                     self.stop(silent=True, unexpected=True)
+                    if was_tun_active and not _from_reconnect:
+                        self.tun_armed = True
                     return False
 
                 with open(XRAY_CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -3924,13 +3992,14 @@ class ProxyManager:
                     return False
                 is_live = self.verify_live_connectivity(timeout=4.5)
                 self._reconnecting = False
-                self._on_started(node, system_proxy=True)
+                self._on_started(node, system_proxy=want_sys_proxy)
                 self._path_healthy = bool(is_live)
                 self._path_fail_streak = 0 if is_live else 1
                 tun_suffix = ""
                 if was_tun_active:
                     ok_tun, tun_msg = set_tun_mode_detailed(True, manager=self)
-                    tun_suffix = " + TUN" if ok_tun else f" (TUN restore skipped: {tun_msg})"
+                    self.tun_armed = False
+                    tun_suffix = " + TUN" if ok_tun else f" (TUN skipped: {tun_msg})"
                 if is_live:
                     self.status_msg = f"🟢 Connected to {node.get('tag', 'Proxy')} (Verified Live{tun_suffix})"
                 else:
@@ -3942,6 +4011,8 @@ class ProxyManager:
                 self._append_log(self.status_msg)
 
             self.stop(silent=True, unexpected=True)
+            if was_tun_active and not _from_reconnect:
+                self.tun_armed = True
             return False
 
     def _trigger_auto_reconnect(self, node: dict, reason: str, restore_tun: bool = False):
@@ -4053,6 +4124,8 @@ class ProxyManager:
             if my_pid and not self._is_pid_alive(int(my_pid)):
                 self._manual_stop = True
                 self._reset_local_state()
+                if get_gnome_proxy_state(self.proxy_port):
+                    set_gnome_proxy(False, self.proxy_port, http_port=self.proxy_port + 1)
                 self.status_msg = "🔴 Proxy Disconnected (OFF)"
             return
 
@@ -4128,8 +4201,11 @@ class ProxyManager:
                 self.connected
                 and (not self._manual_stop)
                 and (not self._reconnecting)
+                and (not self._path_check_running)
                 and ((now - self._last_path_check) >= health_interval)
             )
+            if need_path_check:
+                self._path_check_running = True
 
             if self.connected:
                 down, up = self._record_live_counters()
@@ -4150,10 +4226,15 @@ class ProxyManager:
             self._lock.release()
 
         if need_path_check:
-            try:
-                self._run_path_health_check()
-            except Exception:
-                pass
+            def _bg_health_check():
+                try:
+                    self._run_path_health_check()
+                except Exception:
+                    pass
+                finally:
+                    self._path_check_running = False
+
+            threading.Thread(target=_bg_health_check, daemon=True).start()
 
         return {
             "down_speed_fmt": format_speed(self.down_speed),
@@ -4168,11 +4249,12 @@ class ProxyManager:
             "path_healthy": bool(getattr(self, "_path_healthy", True)),
         }
 
-    def stop(self, silent: bool = False, unexpected: bool = False):
+    def stop(self, silent: bool = False, unexpected: bool = False, _preserve_system_proxy: bool = False):
         """Stop active proxy connection."""
         if not unexpected:
             self._manual_stop = True
             self._reconnecting = False
+            self.tun_armed = False
 
         with self._lock:
             if self.connected and self.active_node:
@@ -4188,13 +4270,16 @@ class ProxyManager:
             # Crucially: TUN must be stopped regardless of 'silent', because unexpected drops
             # or background reconnects would otherwise leave system internet severed!
             tun_note = ""
-            if is_tun_active() or os.path.exists(TUN_MANAGED_FILE):
+            if is_tun_active() or _is_tun_managed():
                 ok_tun, _ = set_tun_mode_detailed(False)
                 if ok_tun:
                     tun_note = " & stopped TUN"
 
             if self.current_session_id:
-                TrafficTracker.end_session(self.current_session_id, self.session_down, self.session_up)
+                try:
+                    TrafficTracker.end_session(self.current_session_id, self.session_down, self.session_up)
+                except Exception:
+                    pass
                 self.current_session_id = None
 
             target_pid = self.proc.pid if self.proc else self._adopted_pid
@@ -4219,19 +4304,28 @@ class ProxyManager:
 
             self._cleanup_state()
 
-            curr_proxy = get_current_gnome_proxy()
-            curr_ports = {str(curr_proxy.get("http_port") or ""), str(curr_proxy.get("socks_port") or "")}
-            xhm_ports = {str(self.proxy_port), str(self.proxy_port + 1)}
-            pointing_to_xhm = curr_proxy.get("mode") == "manual" and bool(curr_ports & xhm_ports)
+            restored_note = ""
+            if not _preserve_system_proxy:
+                curr_proxy = get_current_gnome_proxy()
+                curr_ports = {
+                    str(curr_proxy.get("http_port") or ""),
+                    str(curr_proxy.get("https_port") or ""),
+                    str(curr_proxy.get("socks_port") or ""),
+                }
+                xhm_ports = {str(self.proxy_port), str(self.proxy_port + 1)}
+                pointing_to_xhm = curr_proxy.get("mode") == "manual" and bool(curr_ports & xhm_ports)
 
-            if was_sys_proxy or pointing_to_xhm:
-                set_gnome_proxy(False, self.proxy_port, http_port=self.proxy_port + 1)
+                if was_sys_proxy or pointing_to_xhm:
+                    set_gnome_proxy(False, self.proxy_port, http_port=self.proxy_port + 1)
+                    ext_desc = get_external_gnome_proxy_desc(self.proxy_port)
+                    if ext_desc:
+                        restored_note = f"; restored previous proxy {ext_desc}"
 
             # Ensure resolved DNS cache and physical interface routes are 100% healthy
             _revert_system_tun_dns()
 
             if not silent:
-                self.status_msg = f"🔴 Proxy Disconnected (OFF{tun_note})"
+                self.status_msg = f"🔴 Proxy Disconnected (OFF{tun_note}{restored_note})"
                 self._append_log(self.status_msg)
 
     def toggle(self, node: dict = None) -> bool:
@@ -4414,6 +4508,9 @@ def read_update_cache() -> Optional[dict]:
             cached["update_available"] = bool(int(cached.get("ahead_by") or 0) > 0)
     elif meta["sync_needed"]:
         cached["update_available"] = True
+    elif not meta["commit"] and cached.get("compare_status") != "version_ahead":
+        cached["update_available"] = False
+        cached["ahead_by"] = 0
     return cached
 
 
@@ -4436,11 +4533,11 @@ def _write_update_cache(payload: dict):
         pass
 
 
-def _urlopen_json(url: str, timeout: float = 3.5, http_proxy_port: Optional[int] = None) -> dict:
-    """Fetch JSON over HTTPS, optionally routing through the local XHM HTTP proxy."""
+def _urlopen_text(url: str, timeout: float = 3.5, http_proxy_port: Optional[int] = None, accept: str = "text/plain") -> str:
+    """Fetch UTF-8 text over HTTPS, optionally routing through the local XHM HTTP proxy."""
     headers = {
         "User-Agent": "xhm-update-checker/1.0",
-        "Accept": "application/vnd.github+json",
+        "Accept": accept,
     }
     req = urllib.request.Request(url, headers=headers)
     if http_proxy_port:
@@ -4449,9 +4546,43 @@ def _urlopen_json(url: str, timeout: float = 3.5, http_proxy_port: Optional[int]
     else:
         opener = urllib.request.build_opener()
     with opener.open(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def _urlopen_json(url: str, timeout: float = 3.5, http_proxy_port: Optional[int] = None) -> dict:
+    """Fetch JSON over HTTPS, optionally routing through the local XHM HTTP proxy."""
+    raw = _urlopen_text(url, timeout=timeout, http_proxy_port=http_proxy_port, accept="application/vnd.github+json")
+    data = json.loads(raw)
+    return data if isinstance(data, dict) else {}
+
+
+def _parse_semver(ver: str) -> Tuple[int, ...]:
+    """Parse numeric dot-separated version parts for safe comparison."""
+    nums = []
+    for part in str(ver or "").strip().lstrip("vV").split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        nums.append(int(digits) if digits else 0)
+    return tuple(nums) if nums else (0,)
+
+
+def _evaluate_commit_diff(meta: dict, latest_sha: str, gh_pair: Optional[Tuple[str, str]], timeout: float, http_proxy_port: Optional[int]) -> Tuple[int, str]:
+    """Return (ahead_by, compare_status), falling back to VERSION comparison when local commit is unknown."""
+    installed_commit = meta.get("commit") or ""
+    if installed_commit:
+        is_diff = latest_sha != installed_commit
+        return (1 if is_diff else 0), ("ahead" if is_diff else "identical")
+
+    branch = meta.get("branch") or "main"
+    if gh_pair:
+        owner, repo = gh_pair
+        ver_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{urllib.parse.quote(branch)}/VERSION"
+        try:
+            remote_ver = _urlopen_text(ver_url, timeout=min(timeout, 2.5), http_proxy_port=http_proxy_port).strip()
+            if remote_ver and _parse_semver(remote_ver) > _parse_semver(meta.get("version") or "1.0.0"):
+                return 1, "version_ahead"
+        except Exception:
+            pass
+    return 0, "unknown_commit"
 
 
 def _fetch_remote_head_info(meta: dict, timeout: float = 3.5, http_proxy_port: Optional[int] = None) -> dict:
@@ -4501,14 +4632,14 @@ def _fetch_remote_head_info(meta: dict, timeout: float = 3.5, http_proxy_port: O
             commit_msg = msg_raw.splitlines()[0] if msg_raw else ""
             commit_date = str((commit_obj.get("author") or {}).get("date") or "")
             if latest_sha:
-                is_diff = bool(not installed_commit or latest_sha != installed_commit)
+                ahead_by, cmp_status = _evaluate_commit_diff(meta, latest_sha, gh_pair, timeout, http_proxy_port)
                 return {
                     "latest_commit": latest_sha,
                     "latest_short": latest_sha[:7],
                     "commit_message": commit_msg,
                     "commit_date": commit_date,
-                    "ahead_by": 1 if is_diff else 0,
-                    "compare_status": "ahead" if is_diff else "identical",
+                    "ahead_by": ahead_by,
+                    "compare_status": cmp_status,
                     "release_url": str(br_data.get("html_url") or f"{repo_web_url}/commits/{branch}"),
                 }
         except Exception as e:
@@ -4533,14 +4664,14 @@ def _fetch_remote_head_info(meta: dict, timeout: float = 3.5, http_proxy_port: O
         ).decode("utf-8", errors="ignore").strip()
         if out:
             latest_sha = out.split()[0].strip()
-            is_diff = bool(not installed_commit or latest_sha != installed_commit)
+            ahead_by, cmp_status = _evaluate_commit_diff(meta, latest_sha, gh_pair, timeout, http_proxy_port)
             return {
                 "latest_commit": latest_sha,
                 "latest_short": latest_sha[:7],
                 "commit_message": "",
                 "commit_date": "",
-                "ahead_by": 1 if is_diff else 0,
-                "compare_status": "ahead" if is_diff else "identical",
+                "ahead_by": ahead_by,
+                "compare_status": cmp_status,
                 "release_url": https_remote[:-4] if https_remote.endswith(".git") else https_remote,
             }
         raise RuntimeError("Empty response from git ls-remote")
@@ -4585,8 +4716,9 @@ def check_for_updates(force: bool = False, http_proxy_port: Optional[int] = None
         remote = _fetch_remote_head_info(meta, timeout=3.5, http_proxy_port=http_proxy_port)
         ahead_by = int(remote.get("ahead_by") or 0)
         latest_commit = str(remote.get("latest_commit") or "").strip()
+        cmp_status = str(remote.get("compare_status") or "")
         update_available = bool(
-            (ahead_by > 0 and (not meta["commit"] or latest_commit != meta["commit"]))
+            (ahead_by > 0 and ((meta["commit"] and latest_commit != meta["commit"]) or cmp_status == "version_ahead"))
             or meta["sync_needed"]
         )
         payload = {

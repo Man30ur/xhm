@@ -12,7 +12,7 @@ mkdir -p "$PROFILE_DIR" "/tmp/xhm"
 
 # 1. Start local API server daemon if not already listening
 if ! (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
-    nohup python3 "$WEB_DIR/server.py" >>"$SERVER_LOG" 2>&1 &
+    XHM_GUI_MANAGED=1 nohup python3 "$WEB_DIR/server.py" >>"$SERVER_LOG" 2>&1 &
     # Wait for server to bind
     for _ in {1..30}; do
         if (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
@@ -26,10 +26,11 @@ fi
 export CHROME_DESKTOP="xhm-gui.desktop"
 export WAYLAND_APP_ID="xhm-gui"
 
-# 2. Launch standalone modern borderless app window
+# 2. Launch standalone modern borderless app window and shut down everything on close
 for browser in google-chrome google-chrome-stable chromium chromium-browser brave-browser; do
     if command -v "$browser" >/dev/null 2>&1; then
-        exec "$browser" \
+        set +e
+        "$browser" \
             --app="$URL" \
             --user-data-dir="$PROFILE_DIR" \
             --window-size=1040,740 \
@@ -38,6 +39,14 @@ for browser in google-chrome google-chrome-stable chromium chromium-browser brav
             --no-first-run \
             --no-default-browser-check \
             "$@"
+        browser_rc=$?
+        set -e
+
+        # Only shut down if no other XHM browser window for this profile remains open
+        if ! pgrep -f "[u]ser-data-dir=${PROFILE_DIR}" >/dev/null 2>&1; then
+            python3 -c 'import urllib.request; req = urllib.request.Request("http://127.0.0.1:18501/api/shutdown", data=b"{}", headers={"Content-Type": "application/json"}, method="POST"); urllib.request.urlopen(req, timeout=5).read()' >/dev/null 2>&1 || true
+        fi
+        exit "$browser_rc"
     fi
 done
 

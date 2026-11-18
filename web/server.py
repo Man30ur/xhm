@@ -7,6 +7,7 @@ Ties XHM Core (parsers, proxy manager, ping engine) to the modern HTML5 frontend
 import os
 import sys
 import json
+import shlex
 import time
 import threading
 import urllib.parse
@@ -57,6 +58,53 @@ def _ping_sni_for_node(node: dict) -> str:
 class XhmHttpServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def __init__(self, server_address, RequestHandlerClass, gui_managed=None, shutdown_grace_sec: float = 3.0):
+        self.gui_managed = (os.environ.get("XHM_GUI_MANAGED") == "1") if gui_managed is None else bool(gui_managed)
+        self.shutdown_grace_sec = float(shutdown_grace_sec)
+        self.clients_lock = threading.Lock()
+        self.active_clients = {}
+        self.shutdown_timer = None
+        self.shutting_down = False
+        super().__init__(server_address, RequestHandlerClass)
+
+    def register_client(self, cid: str):
+        if not cid:
+            return
+        with self.clients_lock:
+            self.active_clients[str(cid)] = time.time()
+            if self.shutdown_timer is not None:
+                self.shutdown_timer.cancel()
+                self.shutdown_timer = None
+
+    def unregister_client(self, cid: str):
+        with self.clients_lock:
+            if cid:
+                self.active_clients.pop(str(cid), None)
+            if self.gui_managed and not self.active_clients and not self.shutting_down:
+                if self.shutdown_timer is not None:
+                    self.shutdown_timer.cancel()
+                t = threading.Timer(self.shutdown_grace_sec, self.trigger_shutdown)
+                t.daemon = True
+                self.shutdown_timer = t
+                t.start()
+
+    def trigger_shutdown(self):
+        with self.clients_lock:
+            if self.shutting_down:
+                return
+            self.shutting_down = True
+            if self.shutdown_timer is not None:
+                self.shutdown_timer.cancel()
+                self.shutdown_timer = None
+        manager._manual_stop = True
+        manager._reconnecting = False
+        with manager_lock:
+            manager.stop()
+        try:
+            self.shutdown()
+        except Exception:
+            pass
 
 
 class XhmApiHandler(BaseHTTPRequestHandler):
@@ -125,6 +173,11 @@ class XhmApiHandler(BaseHTTPRequestHandler):
         parsed_path = parsed.path
 
         if parsed_path == "/api/status":
+            query = urllib.parse.parse_qs(parsed.query)
+            cid = (query.get("cid", [""])[0] or "").strip()
+            if cid and hasattr(self.server, "register_client"):
+                self.server.register_client(cid)
+
             uptime = "00:00:00"
             if manager.connected and manager.start_time:
                 uptime = xhm_core.format_duration(int(time.time() - manager.start_time))
@@ -147,8 +200,10 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                 "core": manager.core_name or "Xray Core",
                 "proxy_port": manager.proxy_port,
                 "http_port": int(manager.proxy_port) + 1,
-                "system_proxy": xhm_core.get_gnome_proxy_state(),
+                "system_proxy": xhm_core.get_gnome_proxy_state(manager.proxy_port),
+                "external_system_proxy": xhm_core.get_external_gnome_proxy_desc(manager.proxy_port),
                 "tun_mode": xhm_core.is_tun_active(),
+                "tun_armed": bool(getattr(manager, "tun_armed", False)),
                 "tun_supported": xhm_core.is_tun_supported(),
                 "uptime": uptime,
                 "status_msg": manager.status_msg,
@@ -328,16 +383,30 @@ class XhmApiHandler(BaseHTTPRequestHandler):
             with manager_lock:
                 if target:
                     success = manager.start(target)
-                    self.send_json({"success": success, "status_msg": manager.status_msg})
+                    self.send_json({
+                        "success": success,
+                        "status_msg": manager.status_msg,
+                        "tun_mode": xhm_core.is_tun_active(),
+                        "tun_armed": bool(getattr(manager, "tun_armed", False)),
+                    })
                 else:
                     self.send_json({"success": False, "status_msg": "Target node not found"}, status=400)
             return
 
         elif parsed_path == "/api/disconnect":
+            # Signal any in-progress connect loop to abort immediately before waiting on lock.
+            manager._manual_stop = True
+            manager._reconnecting = False
             with manager_lock:
                 manager.stop()
                 msg = manager.status_msg
-            self.send_json({"success": True, "status_msg": msg, "tun_mode": xhm_core.is_tun_active()})
+            self.send_json({
+                "success": True,
+                "status_msg": msg,
+                "tun_mode": xhm_core.is_tun_active(),
+                "tun_armed": bool(getattr(manager, "tun_armed", False)),
+                "system_proxy": xhm_core.get_gnome_proxy_state(manager.proxy_port),
+            })
             return
 
         elif parsed_path == "/api/toggle":
@@ -349,8 +418,32 @@ class XhmApiHandler(BaseHTTPRequestHandler):
         elif parsed_path == "/api/toggle-tun":
             enable = bool(req_data.get("enable"))
             with manager_lock:
-                success, msg = xhm_core.set_tun_mode_detailed(enable, manager=manager)
-            self.send_json({"success": success, "tun_mode": xhm_core.is_tun_active(), "status_msg": msg})
+                active_port, _ = xhm_core._find_active_proxy_context(manager)
+                if not manager.connected and not active_port:
+                    if not xhm_core.is_tun_supported():
+                        success, msg = False, "sing-box binary is required for built-in TUN Mode."
+                    elif enable:
+                        ext_iface = xhm_core.has_external_tun()
+                        if ext_iface:
+                            success, msg = False, f"External VPN/TUN ({ext_iface}) is already active; stop it before enabling TUN Mode."
+                        else:
+                            manager.tun_armed = True
+                            success, msg = True, "TUN Mode pre-armed (starts automatically on Connect)"
+                    else:
+                        manager.tun_armed = False
+                        success, msg = True, "TUN Mode pre-arm cleared"
+                else:
+                    if not enable:
+                        manager.tun_armed = False
+                    success, msg = xhm_core.set_tun_mode_detailed(enable, manager=manager)
+                    if enable and success:
+                        manager.tun_armed = False
+            self.send_json({
+                "success": success,
+                "tun_mode": xhm_core.is_tun_active(),
+                "tun_armed": bool(getattr(manager, "tun_armed", False)),
+                "status_msg": msg,
+            })
             return
 
         elif parsed_path == "/api/toggle-system-proxy":
@@ -366,7 +459,9 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                         xhm_core._atomic_write_json(xhm_core.STATE_FILE, st)
                     except Exception:
                         pass
-            self.send_json({"success": True, "enabled": enable})
+                sys_state = xhm_core.get_gnome_proxy_state(manager.proxy_port)
+                ext_desc = xhm_core.get_external_gnome_proxy_desc(manager.proxy_port)
+            self.send_json({"success": True, "enabled": enable, "system_proxy": sys_state, "external_system_proxy": ext_desc})
             return
 
         elif parsed_path == "/api/toggle-lan":
@@ -393,7 +488,11 @@ class XhmApiHandler(BaseHTTPRequestHandler):
         elif parsed_path == "/api/terminal-proxy-command":
             port = manager.proxy_port
             http_p = port + 1
-            cmd = f'export http_proxy="http://127.0.0.1:{http_p}" https_proxy="http://127.0.0.1:{http_p}" all_proxy="socks5://127.0.0.1:{port}"'
+            try:
+                xhm_core._write_proxy_env_script(manager.connected, port, http_p)
+                cmd = f'. {shlex.quote(xhm_core.ENV_SCRIPT_FILE)}'
+            except Exception:
+                cmd = f'export http_proxy="http://127.0.0.1:{http_p}" https_proxy="http://127.0.0.1:{http_p}" all_proxy="socks5://127.0.0.1:{port}"'
             self.send_json({"command": cmd, "script_path": xhm_core.ENV_SCRIPT_FILE})
             return
 
@@ -490,15 +589,17 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                 targets = [xhm_core.LOG_FILE]
             try:
                 cleared_any = False
+                last_perm_err = None
                 for log_file in targets:
                     if os.path.exists(log_file):
                         try:
                             with open(log_file, "w", encoding="utf-8") as f:
                                 f.write("")
                             cleared_any = True
-                        except PermissionError:
-                            if not cleared_any:
-                                raise
+                        except PermissionError as exc:
+                            last_perm_err = exc
+                if not cleared_any and last_perm_err is not None:
+                    raise last_perm_err
                 self.send_json({"success": True, "message": "Logs cleared", "source": source})
             except Exception as e:
                 self.send_json({"success": False, "error": str(e)}, status=500)
@@ -556,6 +657,21 @@ class XhmApiHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": False, "updated": False, "message": f"Update error: {e}"}, status=500)
             finally:
                 update_lock.release()
+            return
+
+        elif parsed_path == "/api/client-leave":
+            cid = str(req_data.get("cid") or "").strip()
+            if hasattr(self.server, "unregister_client"):
+                self.server.unregister_client(cid)
+            self.send_json({"success": True})
+            return
+
+        elif parsed_path == "/api/shutdown":
+            manager._manual_stop = True
+            manager._reconnecting = False
+            self.send_json({"success": True, "message": "Shutting down XHM"})
+            if hasattr(self.server, "trigger_shutdown"):
+                threading.Thread(target=self.server.trigger_shutdown, daemon=True).start()
             return
 
         self.send_error(404, "Endpoint Not Found")

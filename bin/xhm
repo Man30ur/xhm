@@ -194,7 +194,7 @@ def draw_ui(stdscr, manager: ProxyManager):
                 status_attr = curses.color_pair(3) | curses.A_BOLD
             stdscr.addstr(2, 2, safe_clip(status_badge, max(0, box_width - 28)), status_attr)
 
-            sys_proxy_on = get_gnome_proxy_state()
+            sys_proxy_on = get_gnome_proxy_state(manager.proxy_port)
             tun_on = xhm_core.is_tun_active()
             sys_str = f"Sys:{'ON' if sys_proxy_on else 'OFF'} TUN:{'ON' if tun_on else 'OFF'}"
             sys_attr = (curses.color_pair(2) if (sys_proxy_on or tun_on) else curses.color_pair(4)) | curses.A_BOLD
@@ -365,7 +365,7 @@ def draw_ui(stdscr, manager: ProxyManager):
             manager.stop()
 
         elif _key_is(key, "s", "S", "p", "P"):  # Toggle GNOME System Proxy
-            cur_state = get_gnome_proxy_state()
+            cur_state = get_gnome_proxy_state(manager.proxy_port)
             set_gnome_proxy(not cur_state, manager.proxy_port, http_port=manager.proxy_port + 1)
             manager.status_msg = f"System proxy set to {'ON' if not cur_state else 'OFF'}"
 
@@ -432,7 +432,7 @@ def handle_cli_args(args, manager: ProxyManager):
             print(f"Endpoint:     {manager.active_node.get('server')}:{manager.active_node.get('port')}")
             print(f"Local Proxy:  127.0.0.1:{manager.proxy_port} (SOCKS5) / :{manager.proxy_port + 1} (HTTP)")
             print(f"Traffic:      Down {traffic.get('down_total_fmt', '0 B')} ({traffic.get('down_speed_fmt', '0 B/s')}) | Up {traffic.get('up_total_fmt', '0 B')} ({traffic.get('up_speed_fmt', '0 B/s')})")
-            print(f"System Proxy: {'ENABLED' if get_gnome_proxy_state() else 'DISABLED'}")
+            print(f"System Proxy: {'ENABLED' if get_gnome_proxy_state(manager.proxy_port) else 'DISABLED'}")
             print(f"TUN Mode:     {'ENABLED (xhm-tun)' if xhm_core.is_tun_active() else 'DISABLED'}")
             print(f"Core Engine:  {manager.core_name or 'Xray Core'}")
             print(f"Uptime:       {uptime}")
@@ -443,7 +443,7 @@ def handle_cli_args(args, manager: ProxyManager):
                 if clean_msg:
                     print(f"Message:      {clean_msg}")
             print(f"Local Ports:  127.0.0.1:{manager.proxy_port} (SOCKS5) / :{manager.proxy_port + 1} (HTTP)")
-            print(f"System Proxy: {'ENABLED' if get_gnome_proxy_state() else 'DISABLED'}")
+            print(f"System Proxy: {'ENABLED' if get_gnome_proxy_state(manager.proxy_port) else 'DISABLED'}")
             print(f"TUN Mode:     {'ENABLED (xhm-tun)' if xhm_core.is_tun_active() else 'DISABLED'}")
         print("=" * 54 + "\n")
         sys.exit(0)
@@ -612,7 +612,7 @@ def main():
         print("[ON] xhm is running in background (Daemon Mode)")
         print(f"     Node:         [{manager.active_node.get('type','').upper()}] {manager.active_node.get('tag')}")
         print(f"     Proxy Ports:  127.0.0.1:{manager.proxy_port} (SOCKS5) / :{manager.proxy_port + 1} (HTTP)")
-        print(f"     System Proxy: {'ENABLED' if get_gnome_proxy_state() else 'DISABLED'}")
+        print(f"     System Proxy: {'ENABLED' if get_gnome_proxy_state(manager.proxy_port) else 'DISABLED'}")
         print("     Commands:")
         print("       xhm         -> Reopen interactive menu")
         print("       xhm off     -> Disconnect & turn off")

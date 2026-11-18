@@ -619,9 +619,9 @@
     .control-item-hint {
       font-size: 11px;
       color: var(--text-dim);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      white-space: normal;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
     }
     .control-badge-mini {
       font-size: 10px;
@@ -630,6 +630,10 @@
       padding: 1px 6px;
       border-radius: 4px;
       font-weight: 700;
+    }
+    .control-badge-mini.armed {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--accent-amber-text);
     }
 
     .btn-copy-cli {
@@ -689,6 +693,9 @@
     }
     input:checked + .slider {
       background-color: var(--accent-emerald);
+    }
+    .switch.is-armed input:checked + .slider {
+      background-color: var(--accent-amber);
     }
     input:checked + .slider:before {
       transform: translateX(20px);
@@ -1962,6 +1969,36 @@
         border-right: none;
         border-bottom: 1px solid var(--border-card);
         overflow-y: visible;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        padding: 14px 16px;
+      }
+      #sidebar .brand,
+      #sidebar .traffic-card,
+      #sidebar .btn-copy-cli,
+      #sidebar .sidebar-footer {
+        grid-column: 1 / -1;
+      }
+      #sidebar .status-card { order: 1; }
+      #sidebar .controls-panel { order: 2; justify-content: center; }
+      #sidebar .traffic-card {
+        order: 3;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      #sidebar .traffic-card .speed-grid { flex: 1 1 260px; }
+      #sidebar .traffic-card .usage-row { border-top: none; padding-top: 0; gap: 14px; }
+      #sidebar .btn-copy-cli { order: 4; }
+      #sidebar .sidebar-footer {
+        order: 5;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px 16px;
       }
       #main {
         padding: 16px;
@@ -1983,6 +2020,19 @@
     }
 
     @media (max-width: 560px) {
+      #sidebar {
+        grid-template-columns: 1fr;
+      }
+      #sidebar .traffic-card {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #sidebar .traffic-card .speed-grid { flex: none; }
+      #sidebar .traffic-card .usage-row { border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 6px; }
+      #sidebar .sidebar-footer {
+        flex-direction: column;
+        gap: 6px;
+      }
       .inspector-grid {
         grid-template-columns: 1fr;
       }
@@ -2084,11 +2134,11 @@
         <div class="control-item-meta">
           <div class="control-item-title">
             <span>TUN Mode</span>
-            <span class="control-badge-mini">xhm-tun</span>
+            <span class="control-badge-mini" id="tunModeBadge">xhm-tun</span>
           </div>
           <div class="control-item-hint" id="tunControlHint">Pre-arm or start full-device tunnel</div>
         </div>
-        <label class="switch">
+        <label class="switch" id="tunSwitchLabel">
           <input type="checkbox" id="swTunMode" aria-label="TUN Mode" onchange="toggleTunMode(this.checked)">
           <span class="slider"></span>
         </label>
@@ -2097,6 +2147,7 @@
       <div class="control-item" title="Configure desktop environment and browser proxy settings">
         <div class="control-item-meta">
           <div class="control-item-title">System Proxy</div>
+          <div class="control-item-hint" id="sysProxyControlHint">Desktop &amp; browser proxy</div>
         </div>
         <label class="switch">
           <input type="checkbox" id="swSystemProxy" aria-label="System Proxy" onchange="toggleSystemProxy(this.checked)">
@@ -2136,6 +2187,10 @@
         <span>Total Servers</span>
         <span id="totalNodesLabel">0</span>
       </div>
+      <div class="footer-row">
+        <span>Version</span>
+        <button type="button" class="footer-port-btn" id="versionFooterBtn" onclick="openUpdateModal()" title="View version and check for Git updates">v1.0.0</button>
+      </div>
     </div>
   </aside>
 
@@ -2145,7 +2200,7 @@
     <div class="topbar">
       <div class="search-box">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 18a7.952 7.952 0 0 0 4.897-1.688l4.396 4.396 1.414-1.414-4.396-4.396A7.952 7.952 0 0 0 18 10c0-4.411-3.589-8-8-8s-8 3.589-8 8 3.589 8 8 8zm0-14c3.309 0 6 2.691 6 6s-2.691 6-6 6-6-2.691-6-6 2.691-6 6-6z"/></svg>
-        <input type="text" class="search-input" id="searchInput" aria-label="Search servers" placeholder="Search servers (tag, host, protocol)... [Ctrl+K]" oninput="handleSearch(this.value)">
+        <input type="text" class="search-input" id="searchInput" aria-label="Search servers" placeholder="Search servers... [Ctrl+K]" oninput="handleSearch(this.value)">
         <span class="search-count-badge" id="visibleCounter" title="Visible servers">0</span>
       </div>
 
@@ -2579,6 +2634,11 @@
     let editingNodeId = null;
     let logsSource = 'core';
     let statusFetchInFlight = false;
+    let statusFetchPendingForce = false;
+    const clientSessionId = (window.crypto && typeof window.crypto.randomUUID === 'function')
+      ? window.crypto.randomUUID()
+      : ('xhm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10));
+    let clientLeaveSent = false;
 
     const pingCacheById = {};
     const pingAttemptedIds = new Set();
@@ -2726,16 +2786,23 @@
 
     async function fetchStatus(force = false) {
       if (document.hidden && !force) return;
-      if (statusFetchInFlight) return;
+      if (statusFetchInFlight) {
+        if (force) statusFetchPendingForce = true;
+        return;
+      }
       statusFetchInFlight = true;
       try {
-        const res = await fetch('/api/status');
+        const res = await fetch(`/api/status?cid=${encodeURIComponent(clientSessionId)}`);
         appStatus = await res.json();
         updateStatusUI();
       } catch (e) {
         console.error('Status fetch error:', e);
       } finally {
         statusFetchInFlight = false;
+        if (statusFetchPendingForce) {
+          statusFetchPendingForce = false;
+          await fetchStatus(true);
+        }
       }
     }
 
@@ -2945,9 +3012,26 @@
       }
 
       if (swProxy) swProxy.checked = !!appStatus.system_proxy;
+      const sysProxyHint = document.getElementById('sysProxyControlHint');
+      if (sysProxyHint) {
+        if (appStatus.system_proxy) sysProxyHint.textContent = 'Routing desktop & browser traffic';
+        else if (appStatus.external_system_proxy) sysProxyHint.textContent = `External proxy (${appStatus.external_system_proxy})`;
+        else sysProxyHint.textContent = 'Desktop & browser proxy off';
+      }
 
       if (swTun) {
-        if (appStatus.tun_mode !== undefined) swTun.checked = !!appStatus.tun_mode;
+        const tunActive = !!appStatus.tun_mode;
+        const tunArmed = !tunActive && !!appStatus.tun_armed;
+        const tunSwitchLabel = document.getElementById('tunSwitchLabel');
+        const tunModeBadge = document.getElementById('tunModeBadge');
+        if (appStatus.tun_mode !== undefined || appStatus.tun_armed !== undefined) {
+          swTun.checked = tunActive || tunArmed;
+        }
+        if (tunSwitchLabel) tunSwitchLabel.classList.toggle('is-armed', tunArmed);
+        if (tunModeBadge) {
+          tunModeBadge.textContent = tunArmed ? 'ARMED' : 'xhm-tun';
+          tunModeBadge.classList.toggle('armed', tunArmed);
+        }
         const tunSupported = appStatus.tun_supported !== false;
         if (!tunSupported) {
           swTun.disabled = true;
@@ -2955,9 +3039,10 @@
         } else {
           if (swTun.dataset.inFlight !== 'true') swTun.disabled = false;
           if (tunHint) {
-            if (appStatus.tun_mode) tunHint.textContent = 'Active: full system traffic routed';
+            if (tunActive) tunHint.textContent = 'Active: full system traffic routed';
+            else if (tunArmed) tunHint.textContent = 'Pre-armed (starts automatically on Connect)';
             else if (appStatus.connected) tunHint.textContent = 'Ready to route all device traffic';
-            else tunHint.textContent = swTun.checked ? 'Pre-armed (starts on Connect)' : 'Connect first or toggle to pre-arm';
+            else tunHint.textContent = 'Toggle to pre-arm (starts on Connect)';
           }
         }
       }
@@ -3354,13 +3439,20 @@
     }
 
     async function disconnectProxy() {
+      const mainBtn = document.getElementById('btnMainToggle');
+      if (mainBtn) {
+        mainBtn.disabled = true;
+        mainBtn.innerHTML = '<span>Disconnecting...</span>';
+      }
       try {
         const res = await fetch('/api/disconnect', { method: 'POST' });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         await fetchStatus(true);
         showToast(data.status_msg || 'Proxy disconnected', 'info');
       } catch (e) {
         showToast('Disconnect error: ' + e, 'error');
+      } finally {
+        updateStatusUI();
       }
     }
 
@@ -3370,7 +3462,11 @@
         sw.dataset.inFlight = 'true';
         sw.disabled = true;
       }
-      showToast(enable ? 'Starting built-in xhm-tun...' : 'Stopping xhm-tun...', 'info');
+      if (appStatus && appStatus.connected) {
+        showToast(enable ? 'Starting built-in xhm-tun...' : 'Stopping xhm-tun...', 'info');
+      } else {
+        showToast(enable ? 'Pre-arming TUN Mode...' : 'Clearing TUN pre-arm...', 'info');
+      }
       try {
         const res = await fetch('/api/toggle-tun', {
           method: 'POST',
@@ -3379,7 +3475,10 @@
         });
         const data = await res.json();
         if (data.success) {
-          showToast(data.status_msg || `Full System TUN Mode ${data.tun_mode ? 'Enabled' : 'Disabled'}`, 'info');
+          showToast(
+            data.status_msg || (data.tun_armed ? 'TUN Mode pre-armed (starts on Connect)' : `Full System TUN Mode ${data.tun_mode ? 'Enabled' : 'Disabled'}`),
+            'info'
+          );
         } else {
           showToast(data.status_msg || 'TUN mode failed to start', 'error');
         }
@@ -3461,7 +3560,7 @@
         const data = await res.json();
         if (data.command) {
           await copyToClipboard(data.command);
-          showToast('Copied CLI proxy export to clipboard!', 'success');
+          showToast('Copied terminal proxy command to clipboard!', 'success');
         }
       } catch (e) {
         showToast('Failed to copy: ' + e, 'error');
@@ -5070,6 +5169,7 @@
     function openUpdateModal() {
       renderUpdateModal();
       openModalEl('updateModal', 'btnCheckUpdateAgain');
+      if (!updateInfo) checkForUpdates(false);
     }
 
     function closeUpdateModal() {
@@ -5161,6 +5261,12 @@
 
         const pill = document.getElementById('updatePill');
         const pillLabel = document.getElementById('updatePillLabel');
+        const verFooterBtn = document.getElementById('versionFooterBtn');
+        if (verFooterBtn) {
+          const ver = data.installed_version || '1.0.0';
+          const shortSha = data.installed_short ? ` · ${data.installed_short}` : '';
+          verFooterBtn.textContent = `v${ver}${shortSha}`;
+        }
         if (pill) {
           if (data.update_available) {
             pill.classList.add('visible');
@@ -5430,6 +5536,26 @@
         }
       });
     }
+
+    function sendClientLeave() {
+      if (clientLeaveSent) return;
+      clientLeaveSent = true;
+      const payload = JSON.stringify({ cid: clientSessionId });
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/client-leave', new Blob([payload], { type: 'application/json' }));
+        } else {
+          fetch('/api/client-leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true
+          }).catch(() => {});
+        }
+      } catch (_) {}
+    }
+    window.addEventListener('pagehide', sendClientLeave);
+    window.addEventListener('beforeunload', sendClientLeave);
 
     // Init
     setupDelegatedListeners();

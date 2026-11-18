@@ -11,6 +11,7 @@ import atexit
 import base64
 import contextlib
 import curses
+import http.client
 import importlib.machinery
 import importlib.util
 import io
@@ -24,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 import urllib.error
@@ -536,6 +538,20 @@ class TestConfigBuildersAndCoreSchemas(_IsolatedXhmTestCase):
         self.assertEqual(sob["protocol"], "socks")
         self.assertEqual(sob["settings"]["servers"][0]["users"][0]["user"], "bob")
 
+        h2_raw = {
+            "type": "vless",
+            "tag": "H2Node",
+            "server": "h2.example.com",
+            "server_port": 443,
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "tls": {"enabled": True, "server_name": "h2.example.com"},
+            "transport": {"type": "h2", "host": ["cdn.example.com"], "path": "/h2p"},
+        }
+        h2_ob = xhm_core.singbox_to_xray_outbound(h2_raw)
+        self.assertEqual(h2_ob["streamSettings"]["network"], "xhttp")
+        self.assertEqual(h2_ob["streamSettings"]["xhttpSettings"]["host"], "cdn.example.com")
+        self.assertEqual(h2_ob["streamSettings"]["xhttpSettings"]["path"], "/h2p")
+
     def test_build_xray_config_no_dns_leak_and_validates_with_xray_binary(self):
         sample_links = [
             "vless://11111111-1111-1111-1111-111111111111@v1.example.com:443?security=reality&sni=google.com&pbk=7p5vM2m2S6c4B3R1L8T9w2N5q0F3k6V1j4X7y8Z2cDA&sid=ab12&fp=chrome&type=tcp#R1",
@@ -702,6 +718,34 @@ class TestEnvGnomeAndTrafficTracker(_IsolatedXhmTestCase):
         self.assertTrue(any(c[-2:] == ["host", "10.10.0.5"] for c in calls))
         self.assertTrue(any(c[-2:] == ["port", "1080"] for c in calls))
         self.assertFalse(os.path.exists(xhm_core.SAVED_SYSTEM_PROXY_FILE))
+
+    def test_get_gnome_proxy_state_scoped_to_xhm_ports(self):
+        ext_proxy = {
+            "mode": "manual",
+            "http_host": "127.0.0.1",
+            "http_port": "10809",
+            "https_host": "127.0.0.1",
+            "https_port": "10809",
+            "socks_host": "127.0.0.1",
+            "socks_port": "10808",
+        }
+        xhm_proxy = {
+            "mode": "manual",
+            "http_host": "127.0.0.1",
+            "http_port": "39851",
+            "https_host": "127.0.0.1",
+            "https_port": "39851",
+            "socks_host": "127.0.0.1",
+            "socks_port": "39850",
+        }
+        with mock.patch("xhm_core.subprocess.run", return_value=subprocess.CompletedProcess(["gsettings"], 0, "'manual'\n", "")):
+            with mock.patch("xhm_core.get_current_gnome_proxy", return_value=ext_proxy):
+                self.assertTrue(xhm_core.get_gnome_proxy_state())
+                self.assertFalse(xhm_core.get_gnome_proxy_state(39850))
+                self.assertEqual(xhm_core.get_external_gnome_proxy_desc(39850), "127.0.0.1:10809")
+            with mock.patch("xhm_core.get_current_gnome_proxy", return_value=xhm_proxy):
+                self.assertTrue(xhm_core.get_gnome_proxy_state(39850))
+                self.assertEqual(xhm_core.get_external_gnome_proxy_desc(39850), "")
 
     def test_traffic_tracker_end_session_invalid_month_latest_tag_and_reset(self):
         xhm_core.TrafficTracker.end_session(999, 100, 200)
@@ -880,6 +924,75 @@ class TestProxyManagerLifecycle(_IsolatedXhmTestCase):
         self.assertIn("not responding", msg.lower())
         mock_live.assert_called()
         mock_build.assert_not_called()
+
+    def test_verify_tun_live_does_not_false_pass_when_curl_fails(self):
+        with mock.patch("xhm_core.is_tun_active", return_value=True), \
+             mock.patch("xhm_core.shutil.which", return_value="/usr/bin/curl"), \
+             mock.patch("xhm_core.subprocess.run", return_value=subprocess.CompletedProcess(["curl"], 28, "", "timeout")), \
+             mock.patch("xhm_core.verify_http_proxy_live", return_value=True) as mock_http_live:
+            self.assertFalse(xhm_core.verify_tun_live(timeout=1.0))
+            mock_http_live.assert_not_called()
+
+    def test_prearmed_tun_starts_on_connect_and_stop_resists_db_error(self):
+        mgr = self._make_manager()
+        n1 = _wrap_node("vless://11111111-1111-1111-1111-111111111111@n1.example.com:443?security=none#N1")
+        n2 = _wrap_node("vless://22222222-2222-2222-2222-222222222222@n2.example.com:443?security=none#N2")
+        procs = []
+
+        def fake_popen(*args, **kwargs):
+            p = _FakePopenProc(alive=True)
+            procs.append(p)
+            return p
+
+        fake_xray = os.path.join(self._tmpdir.name, "xray")
+        with open(fake_xray, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(fake_xray, 0o755)
+
+        mgr.tun_armed = True
+        with mock.patch("xhm_core.XRAY_BIN", fake_xray), \
+             mock.patch("xhm_core.is_port_in_use", side_effect=lambda port: bool(procs)), \
+             mock.patch("xhm_core.get_physical_interface", return_value=("192.0.2.10", None)), \
+             mock.patch("xhm_core.subprocess.run", return_value=subprocess.CompletedProcess(["xray"], 0, "", "")), \
+             mock.patch("xhm_core.subprocess.Popen", side_effect=fake_popen), \
+             mock.patch("xhm_core.is_tun_active", return_value=False), \
+             mock.patch("xhm_core.set_tun_mode_detailed", return_value=(True, "TUN True")) as mock_tun, \
+             mock.patch("xhm_core.set_gnome_proxy") as mock_gnome, \
+             mock.patch("xhm_core.get_current_gnome_proxy", return_value={"mode": "none"}), \
+             mock.patch("xhm_core.get_gnome_proxy_state", return_value=False), \
+             mock.patch("xhm_core._revert_system_tun_dns"), \
+             mock.patch.object(mgr, "verify_live_connectivity", return_value=True), \
+             mock.patch.object(mgr, "_kill_pid_or_pgid"), \
+             mock.patch.object(mgr, "_is_pid_alive", return_value=True):
+            ok = mgr.start(n1)
+            self.assertTrue(ok)
+            self.assertFalse(mgr.tun_armed)
+            mock_tun.assert_called_once_with(True, manager=mgr)
+
+            # Simulate user turning System Proxy OFF before switching servers
+            with open(xhm_core.STATE_FILE, "r", encoding="utf-8") as f:
+                st = json.load(f)
+            st["system_proxy"] = False
+            xhm_core._atomic_write_json(xhm_core.STATE_FILE, st)
+            mock_gnome.reset_mock()
+
+            ok2 = mgr.start(n2)
+            self.assertTrue(ok2)
+            # Switch must preserve system_proxy=False and never call set_gnome_proxy(True)
+            self.assertFalse(any(c.args[0] is True for c in mock_gnome.call_args_list))
+
+        with mock.patch("xhm_core.TrafficTracker.end_session", side_effect=RuntimeError("db locked")), \
+             mock.patch("xhm_core.is_tun_active", return_value=False), \
+             mock.patch("xhm_core.set_gnome_proxy") as mock_gnome_off, \
+             mock.patch("xhm_core.get_current_gnome_proxy", return_value={"mode": "manual", "http_port": "39851"}), \
+             mock.patch("xhm_core.get_external_gnome_proxy_desc", return_value=""), \
+             mock.patch("xhm_core._revert_system_tun_dns"), \
+             mock.patch.object(mgr, "_read_core_counters", return_value=(0, 0)), \
+             mock.patch.object(mgr, "_kill_pid_or_pgid"):
+            mgr.stop()
+            mock_gnome_off.assert_called_once_with(False, 39850, http_port=39851)
+            self.assertFalse(mgr.connected)
+            self.assertFalse(mgr.tun_armed)
 
     def test_path_health_check_reconnects_after_fail_streak(self):
         mgr = self._make_manager()
@@ -1100,6 +1213,89 @@ class TestWebServerApi(_IsolatedXhmTestCase):
             self.assertEqual(toggled.get("lan_ip"), "192.0.2.55")
             self.assertEqual(toggled.get("http_port"), self.test_mgr.proxy_port + 1)
             self.assertTrue(self.test_mgr.allow_lan)
+
+    def test_api_prearm_tun_while_disconnected_and_clear_logs_permission_fallback(self):
+        with mock.patch("xhm_core.is_tun_supported", return_value=True), \
+             mock.patch("xhm_core.has_external_tun", return_value=None), \
+             mock.patch("xhm_core.is_tun_active", return_value=False):
+            c1, _, b1 = self._request("POST", "/api/toggle-tun", body={"enable": True})
+            self.assertEqual(c1, 200)
+            d1 = json.loads(b1)
+            self.assertTrue(d1["success"])
+            self.assertTrue(d1["tun_armed"])
+            self.assertFalse(d1["tun_mode"])
+
+            c2, _, b2 = self._request("POST", "/api/toggle-tun", body={"enable": False})
+            self.assertEqual(c2, 200)
+            d2 = json.loads(b2)
+            self.assertTrue(d2["success"])
+            self.assertFalse(d2["tun_armed"])
+
+        alt_tun = f"{xhm_core.TUN_LOG_FILE}.{os.getuid()}"
+        with open(xhm_core.TUN_LOG_FILE, "w", encoding="utf-8") as f:
+            f.write("root log\n")
+        with open(alt_tun, "w", encoding="utf-8") as f:
+            f.write("user log\n")
+
+        orig_open = open
+
+        def fake_open(path, mode="r", *args, **kwargs):
+            if path == xhm_core.TUN_LOG_FILE and "w" in mode:
+                raise PermissionError("owned by root")
+            return orig_open(path, mode, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=fake_open):
+            c3, _, _ = self._request("POST", "/api/clear-logs", body={"source": "tun"})
+        self.assertEqual(c3, 200)
+        with open(alt_tun, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "")
+
+    def test_gui_managed_client_leave_and_shutdown_stops_everything(self):
+        srv = web_server.XhmHttpServer(("127.0.0.1", 0), web_server.XhmApiHandler, gui_managed=True, shutdown_grace_sec=0.15)
+        port = srv.server_address[1]
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+
+        def req(method, path, body=None):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            headers = {}
+            payload = None
+            if body is not None:
+                payload = json.dumps(body).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            conn.request(method, path, body=payload, headers=headers)
+            resp = conn.getresponse()
+            raw = resp.read().decode("utf-8", errors="replace")
+            conn.close()
+            return resp.status, raw
+
+        try:
+            with mock.patch.object(self.test_mgr, "stop") as mock_stop:
+                # Simulate F5 reload: leave then quick re-register cancels shutdown
+                st1, _ = req("GET", "/api/status?cid=tab1")
+                self.assertEqual(st1, 200)
+                st2, _ = req("POST", "/api/client-leave", {"cid": "tab1"})
+                self.assertEqual(st2, 200)
+                st3, _ = req("GET", "/api/status?cid=tab1_reloaded")
+                self.assertEqual(st3, 200)
+                time.sleep(0.25)
+                self.assertFalse(srv.shutting_down)
+                mock_stop.assert_not_called()
+
+                # Simulate closing last window: grace expires -> manager.stop() + server exits
+                st4, _ = req("POST", "/api/client-leave", {"cid": "tab1_reloaded"})
+                self.assertEqual(st4, 200)
+                th.join(timeout=3.0)
+                self.assertFalse(th.is_alive())
+                self.assertTrue(srv.shutting_down)
+                mock_stop.assert_called_once()
+        finally:
+            try:
+                srv.shutdown()
+            except Exception:
+                pass
+            srv.server_close()
+            th.join(timeout=1.0)
 
 
 class TestCliAndTuiHelpers(_IsolatedXhmTestCase):
@@ -1331,6 +1527,40 @@ class TestGitUpdateAndInstaller(_IsolatedXhmTestCase):
             self.assertTrue(res_off["offline"])
             self.assertIn("offline", res_off["error"])
 
+    def test_unknown_commit_does_not_false_positive_without_version_bump(self):
+        with open(xhm_core.INSTALL_META_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "version": "1.0.0",
+                "commit": "",
+                "short_commit": "",
+                "branch": "main",
+                "remote_url": "https://github.com/Man30ur/xhm.git",
+                "repo_dir": "",
+            }, f)
+
+        fake_branch = {
+            "sha": "829d8b46443295d310ac3771597e695b6ff427ca",
+            "html_url": "https://github.com/Man30ur/xhm/commit/829d8b46443295d310ac3771597e695b6ff427ca",
+            "commit": {"message": "latest", "author": {"date": "2026-11-16T15:30:31Z"}},
+        }
+        with (
+            mock.patch.object(xhm_core, "_urlopen_json", return_value=fake_branch),
+            mock.patch.object(xhm_core, "_urlopen_text", return_value="1.0.0\n"),
+            mock.patch.object(xhm_core, "is_port_in_use", return_value=False),
+        ):
+            res_same = xhm_core.check_for_updates(force=True)
+            self.assertFalse(res_same["update_available"])
+            self.assertEqual(res_same["compare_status"], "unknown_commit")
+
+        with (
+            mock.patch.object(xhm_core, "_urlopen_json", return_value=fake_branch),
+            mock.patch.object(xhm_core, "_urlopen_text", return_value="1.1.0\n"),
+            mock.patch.object(xhm_core, "is_port_in_use", return_value=False),
+        ):
+            res_newer = xhm_core.check_for_updates(force=True)
+            self.assertTrue(res_newer["update_available"])
+            self.assertEqual(res_newer["compare_status"], "version_ahead")
+
     def test_apply_git_update_guards_dirty_repo_and_updates_clean_repo(self):
         fake_repo = os.path.join(self._tmpdir.name, "repo")
         os.makedirs(os.path.join(fake_repo, ".git"), exist_ok=True)
@@ -1495,7 +1725,7 @@ class TestGitUpdateAndInstaller(_IsolatedXhmTestCase):
         shutil.copytree(REPO_ROOT, seed_repo, ignore=shutil.ignore_patterns(".venv", "__pycache__"))
         subprocess.run(["git", "-C", seed_repo, "add", "-A"], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", seed_repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "snapshot"],
+            ["git", "-C", seed_repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-q", "-m", "snapshot"],
             check=True,
             capture_output=True,
         )
